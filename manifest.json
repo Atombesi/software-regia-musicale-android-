@@ -1,0 +1,16 @@
+
+{
+  "short_name": "RegiaMusiche",
+  "name": "Regia Musiche Attozero",
+  "icons": [
+    {
+      "src": "/icona_app.png",
+      "sizes": "192x192 512x512",
+      "type": "image/png"
+    }
+  ],
+  "start_url": ".",
+  "display": "standalone",
+  "theme_color": "#020617",
+  "background_color": "#020617"
+}

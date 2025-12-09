@@ -1,0 +1,63 @@
+
+<!DOCTYPE html>
+<html lang="it">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <title>Regia Musiche Attozero</title>
+    <!-- Imposta icona_app.png come icona del software (Favicon) -->
+    <link rel="icon" type="image/png" href="/icona_app.png" />
+    <!-- Manifest per installazione PWA/Android -->
+    <link rel="manifest" href="/manifest.json" />
+    <style>
+      /* Blocco scroll e rimbalzi elastici su tablet */
+      html, body {
+        height: 100dvh;
+        width: 100vw;
+        margin: 0;
+        padding: 0;
+        overflow: hidden;
+        overscroll-behavior: none;
+        background-color: #020617;
+        touch-action: none;
+        -webkit-user-select: none;
+        user-select: none;
+      }
+      
+      #root {
+        height: 100dvh;
+        width: 100vw;
+        overflow: hidden;
+      }
+      
+      ::-webkit-scrollbar { width: 4px; }
+      ::-webkit-scrollbar-track { background: rgba(30, 41, 59, 0.3); }
+      ::-webkit-scrollbar-thumb { background: #475569; border-radius: 4px; }
+    </style>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script type="importmap">
+{
+  "imports": {
+    "react": "https://aistudiocdn.com/react@^19.2.1",
+    "react-dom/client": "https://aistudiocdn.com/react-dom@^19.2.1/client",
+    "react-dom": "https://aistudiocdn.com/react-dom@^19.2.1",
+    "lucide-react": "https://aistudiocdn.com/lucide-react@^0.556.0",
+    "wavesurfer.js": "https://aistudiocdn.com/wavesurfer.js@^7.12.1",
+    "wavesurfer.js/dist/plugins/regions.esm.js": "https://aistudiocdn.com/wavesurfer.js@^7.12.1/dist/plugins/regions.esm.js",
+    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.1/",
+    "react/": "https://aistudiocdn.com/react@^19.2.1/",
+    "wavesurfer.js/": "https://aistudiocdn.com/wavesurfer.js@^7.12.1/",
+    "vite": "https://aistudiocdn.com/vite@^7.2.6",
+    "@vitejs/plugin-react": "https://aistudiocdn.com/@vitejs/plugin-react@^5.1.1",
+    "@capacitor/cli": "https://aistudiocdn.com/@capacitor/cli@^7.4.4",
+    "@capacitor/core": "https://aistudiocdn.com/@capacitor/core@^7.4.4",
+    "@capacitor/filesystem": "https://aistudiocdn.com/@capacitor/filesystem@^7.1.5"
+  }
+}
+</script>
+  </head>
+  <body class="bg-slate-950 text-white select-none">
+    <div id="root"></div>
+    <script type="module" src="./index.tsx"></script>
+  </body>
+</html>

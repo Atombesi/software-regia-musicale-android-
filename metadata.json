@@ -1,0 +1,5 @@
+{
+  "name": "Regia Musiche Attozero",
+  "description": "A sleek, landscape-optimized music player that loads playlists from text files and plays them sequentially.",
+  "requestFramePermissions": []
+}

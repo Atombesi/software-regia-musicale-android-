@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Regia Musiche Attozero</string>
+    <string name="title_activity_main">Regia Musiche Attozero</string>
+    <string name="package_name">com.attozero.regiamusiche</string>
+    <string name="custom_url_scheme">com.attozero.regiamusiche</string>
+</resources>
