@@ -4,7 +4,7 @@ import FileLoader from './components/FileLoader';
 import PlaylistView from './components/PlaylistView';
 import PlayerControls from './components/PlayerControls';
 import Waveform from './components/Waveform';
-import { Disc3, Radio, Smartphone, RefreshCcw, Grid, Zap, Wind, Clock, Save, Volume2, RotateCcw, MapPin, X, Download, HardDrive, Copy, CheckCircle2, Music2, Trash2, Plus, Edit2, FolderOpen, Play, Pause, AlertOctagon, Keyboard, Minus, FileSignature, Check, Scissors, SignalHigh, Mic, ChevronLeft, ChevronRight, LocateFixed, PlayCircle, PauseCircle, StickyNote, Clapperboard, User, Globe } from 'lucide-react';
+import { Disc3, Radio, Smartphone, RefreshCcw, Grid, Zap, Wind, Clock, Save, Volume2, RotateCcw, MapPin, X, Download, HardDrive, Copy, CheckCircle2, Music2, Trash2, Plus, Edit2, FolderOpen, Play, Pause, AlertOctagon, Keyboard, Minus, FileSignature, Check, Scissors, SignalHigh, Mic, ChevronLeft, ChevronRight, LocateFixed, PlayCircle, PauseCircle, StickyNote, Clapperboard, User, Globe, GripVertical } from 'lucide-react';
 import { Capacitor } from '@capacitor/core';
 import { Filesystem, Directory, Encoding, FileInfo } from '@capacitor/filesystem';
 import { translations } from './translations';
@@ -436,6 +436,65 @@ const App: React.FC = () => {
   const [langModalOpen, setLangModalOpen] = useState(false);
   const t = translations[language];
 
+  // PLATFORM CHECK FOR RESIZE / HEIGHT
+  const [isAndroid, setIsAndroid] = useState(false);
+  useEffect(() => {
+    setIsAndroid(Capacitor.getPlatform() === 'android');
+  }, []);
+
+  // --- RESIZABLE COLUMNS STATE ---
+  const [leftPanelWidth, setLeftPanelWidth] = useState(40); // Initial 40%
+  const isDragging = useRef(false);
+
+  // --- DRAG HANDLERS ---
+  const handleDragStart = useCallback((e: React.MouseEvent | React.TouchEvent) => {
+      isDragging.current = true;
+      // Prevent text selection during drag
+      document.body.style.userSelect = 'none';
+  }, []);
+
+  const handleDragMove = useCallback((e: MouseEvent | TouchEvent) => {
+      if (!isDragging.current) return;
+      
+      let clientX;
+      if (window.TouchEvent && e instanceof TouchEvent) {
+          clientX = e.touches[0].clientX;
+      } else if (e instanceof MouseEvent) {
+          clientX = e.clientX;
+      } else {
+          return;
+      }
+
+      const windowWidth = window.innerWidth;
+      let newWidthPct = (clientX / windowWidth) * 100;
+      
+      // Constraint: 25% - 40% (Requested: Editor never smaller than default 60%)
+      if (newWidthPct < 25) newWidthPct = 25;
+      if (newWidthPct > 40) newWidthPct = 40;
+      
+      setLeftPanelWidth(newWidthPct);
+  }, []);
+
+  const handleDragEnd = useCallback(() => {
+      isDragging.current = false;
+      document.body.style.userSelect = '';
+  }, []);
+
+  // GLOBAL DRAG LISTENERS
+  useEffect(() => {
+      window.addEventListener('mousemove', handleDragMove);
+      window.addEventListener('mouseup', handleDragEnd);
+      window.addEventListener('touchmove', handleDragMove);
+      window.addEventListener('touchend', handleDragEnd);
+      return () => {
+          window.removeEventListener('mousemove', handleDragMove);
+          window.removeEventListener('mouseup', handleDragEnd);
+          window.removeEventListener('touchmove', handleDragMove);
+          window.removeEventListener('touchend', handleDragEnd);
+      };
+  }, [handleDragMove, handleDragEnd]);
+
+
   const [songs, setSongs] = useState<Song[]>([]);
   const [sfxItems, setSfxItems] = useState<SfxItem[]>(new Array(6).fill(undefined));
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -609,9 +668,38 @@ const App: React.FC = () => {
         // Source Loading
         if (editingTarget && editingTarget.url) {
              const currentSrc = audioRef.current.src;
-             if (!currentSrc.includes(editingTarget.url) && editingTarget.url.startsWith('blob:') === false) {
-                 audioRef.current.src = editingTarget.url;
-             } else if (editingTarget.url.startsWith('blob:')) {
+             
+             // --- FIX FOR WINDOWS PLAY/PAUSE RESET ISSUE ---
+             let shouldLoad = false;
+
+             if (editingTarget.url.startsWith('blob:')) {
+                 // Blob URLs: Strict equality check
+                 shouldLoad = currentSrc !== editingTarget.url;
+             } else {
+                 if (isAndroid) {
+                     // Android: Strict check (includes) works well with Capacitor paths
+                     shouldLoad = !currentSrc.includes(editingTarget.url);
+                 } else {
+                     // Windows/Desktop: Normalize paths to ignore slash diffs and file:// protocol
+                     const normalizePath = (p: string) => {
+                         try {
+                             return decodeURIComponent(p)
+                                 .replace(/\\/g, '/')          // Normalize slashes
+                                 .replace(/^file:\/\/\/?/, '') // Remove file:// prefix
+                                 .toLowerCase()                // Case insensitive for Windows
+                                 .trim();
+                         } catch { return p.toLowerCase(); }
+                     };
+
+                     const nCur = normalizePath(currentSrc);
+                     const nTgt = normalizePath(editingTarget.url);
+                     
+                     // Check exact match or if current source ends with the target path (handling relative/absolute variance)
+                     shouldLoad = nCur !== nTgt && !nCur.endsWith(nTgt);
+                 }
+             }
+
+             if (shouldLoad) {
                  audioRef.current.src = editingTarget.url;
              }
              
@@ -660,7 +748,7 @@ const App: React.FC = () => {
             }
         }
     }
-  }, [currentIndex, editingSfxIndex, songs, sfxItems, playerState.isPlaying, playbackSource, editingTarget]); // Ensure editingTarget update triggers reload
+  }, [currentIndex, editingSfxIndex, songs, sfxItems, playerState.isPlaying, playbackSource, editingTarget, isAndroid]);
 
   // BLUE BUTTON (BOTTOM) - "Execute as Live"
   const handleMainPlay = () => {
@@ -1290,6 +1378,9 @@ const App: React.FC = () => {
   const currentTrimEndDisplay = editingTarget ? ((editingTarget.trimEnd && editingTarget.trimEnd > 0) ? editingTarget.trimEnd : playerState.duration) : 0;
   const currentTrimStartDisplay = editingTarget ? (editingTarget.trimStart || 0) : 0;
 
+  // WAVEFORM HEIGHT LOGIC (Android = small, Windows/Web = big)
+  const waveformHeightClass = isAndroid ? 'h-16' : 'h-32';
+
   // IMPORTANT: Changed condition to use explicit flag. 
   // This allows empty playlists to be "loaded".
   if (!isPlaylistLoaded) {
@@ -1338,10 +1429,13 @@ const App: React.FC = () => {
       )}
 
       {/* MAIN CONTENT */}
-      <div className="flex-1 flex min-h-0 overflow-hidden">
+      <div className="flex-1 flex min-h-0 overflow-hidden relative" onMouseMove={(e) => isDragging.current && handleDragMove(e.nativeEvent)} onMouseUp={handleDragEnd}>
           
-          {/* LEFT: PLAYLIST (40%) */}
-          <div className="w-[40%] flex flex-col border-r border-slate-800 relative z-10 bg-slate-900/50">
+          {/* LEFT: PLAYLIST */}
+          <div 
+            style={{ width: appMode === 'editing' ? `${leftPanelWidth}%` : '40%' }} 
+            className="flex flex-col border-r border-slate-800 relative z-10 bg-slate-900/50 min-w-[250px] transition-[width] duration-75 ease-linear"
+          >
              <PlaylistView 
                 songs={songs}
                 currentIndex={currentIndex}
@@ -1393,11 +1487,23 @@ const App: React.FC = () => {
              />
           </div>
 
-          {/* RIGHT: TOOLS & WAVEFORM & SFX (60%) */}
-          <div className="w-[60%] flex flex-col bg-slate-900 border-l border-slate-800">
+          {/* RESIZE HANDLE - Only in Editing */}
+          {appMode === 'editing' && (
+              <div
+                  onMouseDown={handleDragStart}
+                  onTouchStart={handleDragStart}
+                  className="w-4 -ml-2 z-20 cursor-col-resize hover:bg-emerald-500/20 active:bg-emerald-500/50 transition-colors flex items-center justify-center group"
+                  style={{ touchAction: 'none' }} // Prevent scrolling on touch
+              >
+                  <div className="w-1 h-8 bg-slate-700 rounded-full group-hover:bg-emerald-400 group-active:bg-emerald-300"></div>
+              </div>
+          )}
+
+          {/* RIGHT: TOOLS & WAVEFORM & SFX */}
+          <div className="flex-1 flex flex-col bg-slate-900 border-l border-slate-800 min-w-0">
              
              {/* 1. WAVEFORM (Dynamic Height) */}
-             <div className="h-16 shrink-0 border-b border-slate-800 relative bg-black/40 transition-[height] duration-300 overflow-hidden">
+             <div className={`${waveformHeightClass} shrink-0 border-b border-slate-800 relative bg-black/40 transition-[height] duration-300 overflow-hidden`}>
                 {showWaveform ? (
                     <Waveform 
                         url={editingTarget?.url || ''}
@@ -1641,8 +1747,8 @@ const App: React.FC = () => {
                  </div>
              </div>
 
-             {/* 4. DIRECTOR NOTE (LIVE ONLY) - Removed from Editing View */}
-             {editingSfxIndex === null && appMode === 'presentation' && (
+             {/* 4. DIRECTOR NOTE (LIVE or Windows Editing) */}
+             {editingSfxIndex === null && (appMode === 'presentation' || !isAndroid) && (
                 <div className="shrink-0 bg-slate-900 p-3 border-t border-slate-800">
                     <div className={`flex items-start gap-3 ${isCompactView ? 'h-24' : 'h-16'}`}>
                         
