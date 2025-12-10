@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { AlertCircle, FolderOpen, FileText, Monitor, ChevronRight, Folder, Music, AlertTriangle, ArrowUpCircle, FilePlus, Info, X, Save } from 'lucide-react';
+import { AlertCircle, FolderOpen, FileText, Monitor, ChevronRight, Folder, Music, AlertTriangle, ArrowUpCircle, FilePlus, Info, X, Save, AlertOctagon } from 'lucide-react';
 import { Song, SfxItem, Language } from '../types';
 import { Filesystem, Directory, Encoding, FileInfo } from '@capacitor/filesystem';
 import { Capacitor } from '@capacitor/core';
@@ -49,6 +49,9 @@ const FileLoader: React.FC<FileLoaderProps> = ({
   // SAVE INPUT STATE
   const [saveFileName, setSaveFileName] = useState(defaultFileName);
 
+  // PATH FIX MODAL STATE
+  const [pathFixModal, setPathFixModal] = useState<{isOpen: boolean, data: any | null}>({isOpen: false, data: null});
+
   // STATE FOR WEB INPUT
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -87,6 +90,14 @@ const FileLoader: React.FC<FileLoaderProps> = ({
       try { path = decodeURIComponent(path); } catch (e) {}
       path = path.replace(/['"]/g, '');
       return path.replace(/^.*[\\\/]/, '').trim();
+  };
+
+  const getDirectoryPath = (fullPath: string): string => {
+      if (!fullPath) return "";
+      const normalized = fullPath.replace(/\\/g, '/');
+      const lastSlash = normalized.lastIndexOf('/');
+      if (lastSlash === -1) return "";
+      return normalized.substring(0, lastSlash);
   };
 
   const removeExtension = (name: string): string => {
@@ -144,6 +155,61 @@ const FileLoader: React.FC<FileLoaderProps> = ({
           }
       });
       return { songs, sfx };
+  };
+
+  // --- PATH RESOLVER HELPER ---
+  const resolvePathsForLoad = async (parsed: { songs: Song[], sfx: SfxItem[] }, currentDir: string, rootDir: Directory) => {
+      // --- HYBRID PATH RESOLUTION ---
+      const resolvePath = async (filenameOrPath: string) => {
+            if (!filenameOrPath) return "";
+
+            // FIX FOR ELECTRON/WINDOWS ABSOLUTE PATHS
+            if (!isAndroid && (filenameOrPath.includes(':\\') || filenameOrPath.startsWith('/'))) {
+                const cleanPath = filenameOrPath.replace(/\\/g, '/');
+                return cleanPath.startsWith('file:') ? cleanPath : `file:///${cleanPath}`;
+            }
+            
+            // 1. Try path AS IS (Absolute/Stored Path)
+            try {
+                const uriResult = await Filesystem.getUri({
+                    path: filenameOrPath,
+                    directory: rootDir
+                });
+                return Capacitor.convertFileSrc(uriResult.uri);
+            } catch (e) {
+                // 2. Fallback: Try Relative to Current Playlist Folder
+                const cleanName = extractFileName(filenameOrPath);
+                const fallbackPath = currentDir ? `${currentDir}/${cleanName}` : cleanName;
+                
+                // Avoid re-trying if they are identical
+                if (fallbackPath === filenameOrPath) return "";
+
+                try {
+                    const uriResult = await Filesystem.getUri({
+                        path: fallbackPath,
+                        directory: rootDir
+                    });
+                    return Capacitor.convertFileSrc(uriResult.uri);
+                } catch (e2) {
+                    return "";
+                }
+            }
+      };
+
+      const resolvedSongs = await Promise.all(parsed.songs.map(async s => ({
+          ...s,
+          url: await resolvePath(s.path || s.url) || s.url // Try s.path first
+      })));
+
+      const resolvedSfx = await Promise.all(parsed.sfx.map(async s => {
+          if (!s) return s;
+          return {
+              ...s,
+              url: await resolvePath(s.path || s.url) || s.url
+          };
+      }));
+
+      return { resolvedSongs, resolvedSfx };
   };
 
   // ==========================================
@@ -279,51 +345,35 @@ const FileLoader: React.FC<FileLoaderProps> = ({
               });
               
               const parsed = parsePlaylistContent(contents.data as string);
+
+              // --- SMART PATH RELINK CHECK (Android) ---
+              // Check if first song's path matches current directory
+              if (parsed.songs.length > 0) {
+                  const firstSong = parsed.songs[0];
+                  // Use raw path from text file to extract directory
+                  const storedDir = getDirectoryPath(firstSong.path || firstSong.url); 
+                  const currentDir = currentPath;
+
+                  // Normalize slashes for comparison
+                  const normalizedStored = storedDir.replace(/\\/g, '/');
+                  const normalizedCurrent = currentDir.replace(/\\/g, '/');
+                  
+                  // Simple check: if path contains folders and they don't match end-to-end (rough check)
+                  // Or if absolute paths differ
+                  const isMismatch = normalizedStored && normalizedCurrent && !normalizedStored.endsWith(normalizedCurrent) && normalizedStored !== normalizedCurrent;
+
+                  if (isMismatch) {
+                      setPathFixModal({
+                          isOpen: true,
+                          data: { parsed, currentDir, rootDir: rootDirectory, fileName: file.name, currentPath }
+                      });
+                      setIsProcessing(false);
+                      return; // Stop here, wait for modal
+                  }
+              }
               
-              // --- HYBRID PATH RESOLUTION ---
-              const resolvePath = async (filenameOrPath: string) => {
-                   if (!filenameOrPath) return "";
-                   
-                   // 1. Try path AS IS (Absolute/Stored Path)
-                   try {
-                       const uriResult = await Filesystem.getUri({
-                           path: filenameOrPath,
-                           directory: rootDirectory
-                       });
-                       return Capacitor.convertFileSrc(uriResult.uri);
-                   } catch (e) {
-                       // 2. Fallback: Try Relative to Current Playlist Folder
-                       const cleanName = extractFileName(filenameOrPath);
-                       const fallbackPath = currentPath ? `${currentPath}/${cleanName}` : cleanName;
-                       
-                       // Avoid re-trying if they are identical
-                       if (fallbackPath === filenameOrPath) return "";
-
-                       try {
-                           const uriResult = await Filesystem.getUri({
-                               path: fallbackPath,
-                               directory: rootDirectory
-                           });
-                           return Capacitor.convertFileSrc(uriResult.uri);
-                       } catch (e2) {
-                           return "";
-                       }
-                   }
-              };
-
-              const resolvedSongs = await Promise.all(parsed.songs.map(async s => ({
-                  ...s,
-                  url: await resolvePath(s.path || s.url) || s.url // Try s.path first
-              })));
-
-              const resolvedSfx = await Promise.all(parsed.sfx.map(async s => {
-                  if (!s) return s;
-                  return {
-                      ...s,
-                      url: await resolvePath(s.path || s.url) || s.url
-                  };
-              }));
-
+              // Proceed if no mismatch or user accepted
+              const { resolvedSongs, resolvedSfx } = await resolvePathsForLoad(parsed, currentPath, rootDirectory);
               onPlaylistLoaded(resolvedSongs, resolvedSfx, file.name, currentPath, rootDirectory);
 
           } catch (e: any) {
@@ -335,7 +385,7 @@ const FileLoader: React.FC<FileLoaderProps> = ({
   };
 
   // ==========================================
-  // WEB INPUT
+  // WEB INPUT (WINDOWS/ELECTRON FIX)
   // ==========================================
   const handleWebFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
       if (e.target.files && e.target.files.length > 0) {
@@ -345,13 +395,17 @@ const FileLoader: React.FC<FileLoaderProps> = ({
           if (pickerMode) {
               const file = files[0];
               if (onFileSelect) {
+                   // ELECTRON FIX: Use 'path' property if available (it exists in Electron's File object)
+                   // Fallback to name if in pure browser.
+                   const electronPath = (file as any).path || file.name;
+
                    onFileSelect({
                        name: file.name,
                        type: 'file',
                        size: file.size,
                        mtime: file.lastModified,
                        uri: ''
-                   }, URL.createObjectURL(file), file.name); // FullPath is just name on Web
+                   }, URL.createObjectURL(file), electronPath); // PASS FULL PATH HERE
               }
               if (onClose) onClose();
               return;
@@ -364,21 +418,53 @@ const FileLoader: React.FC<FileLoaderProps> = ({
               reader.onload = (ev) => {
                   const content = ev.target?.result as string;
                   const parsed = parsePlaylistContent(content);
+
+                  // --- SMART PATH RELINK CHECK (Windows/Electron) ---
+                  if (!isAndroid && (playlistFile as any).path && parsed.songs.length > 0) {
+                      const fullPlaylistPath = (playlistFile as any).path as string;
+                      const currentDir = getDirectoryPath(fullPlaylistPath);
+                      const firstSong = parsed.songs[0];
+                      const storedPath = firstSong.path || firstSong.url;
+                      
+                      const storedDir = getDirectoryPath(storedPath);
+
+                      // Normalize for comparison
+                      const normStored = storedDir.replace(/\\/g, '/');
+                      const normCurrent = currentDir.replace(/\\/g, '/');
+
+                      if (normStored !== normCurrent) {
+                          setPathFixModal({
+                              isOpen: true,
+                              data: { parsed, currentDir, rootDir: undefined, fileName: playlistFile.name, currentPath: currentDir, webFiles: files }
+                          });
+                          return;
+                      }
+                  }
                   
-                  const resolveBlob = (name: string) => {
-                      const clean = extractFileName(name);
+                  const resolveBlob = (nameOrPath: string) => {
+                      // FIX FOR ELECTRON/WINDOWS ABSOLUTE PATHS FROM TXT
+                      // If absolute path found in TXT, convert to file:/// immediately
+                      if (!isAndroid && (nameOrPath.includes(':\\') || nameOrPath.startsWith('/'))) {
+                           const cleanPath = nameOrPath.replace(/\\/g, '/');
+                           return cleanPath.startsWith('file:') ? cleanPath : `file:///${cleanPath}`;
+                      }
+
+                      const clean = extractFileName(nameOrPath);
+                      // Try to match by filename in the selected list (Blob fallback)
                       const match = files.find(f => f.name === clean);
-                      return match ? URL.createObjectURL(match) : name;
+                      // Return Blob if found, otherwise return the original path so Electron can try to load it
+                      return match ? URL.createObjectURL(match) : nameOrPath;
                   };
 
                   const songs = parsed.songs.map(s => ({
                       ...s,
-                      url: resolveBlob(s.originalFileName || s.url)
+                      // If it's a blob, it works. If it's a path, App.tsx will try to load it (Electron allows file://)
+                      url: resolveBlob(s.path || s.originalFileName || s.url)
                   }));
 
                   const sfx = parsed.sfx.map(s => {
                       if(!s) return s;
-                      return { ...s, url: resolveBlob(s.originalFileName || s.url) };
+                      return { ...s, url: resolveBlob(s.path || s.originalFileName || s.url) };
                   });
 
                   onPlaylistLoaded(songs, sfx, playlistFile.name);
@@ -388,13 +474,16 @@ const FileLoader: React.FC<FileLoaderProps> = ({
               // ... existing web fallback ...
               const audioFiles = files.filter(f => isAudioFile(f.name)).sort((a,b) => a.name.localeCompare(b.name));
               if (audioFiles.length > 0) {
-                  const songs: Song[] = audioFiles.map((f, i) => ({
-                      id: `auto-${i}`,
-                      title: removeExtension(f.name),
-                      url: URL.createObjectURL(f),
-                      path: f.name,
-                      originalFileName: f.name
-                  }));
+                  const songs: Song[] = audioFiles.map((f, i) => {
+                      const electronPath = (f as any).path || f.name;
+                      return {
+                        id: `auto-${i}`,
+                        title: removeExtension(f.name),
+                        url: URL.createObjectURL(f),
+                        path: electronPath, // Store Full Path
+                        originalFileName: f.name
+                      };
+                  });
                   onPlaylistLoaded(songs, new Array(6).fill(undefined));
               } else {
                   setError("Nessun file playlist (.txt) o audio trovato.");
@@ -403,10 +492,93 @@ const FileLoader: React.FC<FileLoaderProps> = ({
       }
   };
 
-  // RENDER EXPLORER VIEW (Android Initialized or Force Picker on Web if needed logic)
+  const performPathFix = async (fix: boolean) => {
+      if (!pathFixModal.data) return;
+      
+      const { parsed, currentDir, rootDir, fileName, currentPath, webFiles } = pathFixModal.data;
+      let finalParsed = parsed;
+
+      if (fix) {
+          // UPDATE ALL PATHS TO NEW DIRECTORY
+          const separator = isAndroid ? '/' : '\\'; // Use correct separator for visual cleanliness, though / usually works
+          
+          // FIX: Normalize directory path for Windows
+          let dirPrefix = currentDir;
+          if (!isAndroid) {
+              // Ensure we replace ALL slashes with backslashes for the prefix
+              dirPrefix = dirPrefix.split('/').join('\\');
+          }
+
+          finalParsed.songs = parsed.songs.map((s: Song) => ({
+              ...s,
+              path: dirPrefix + separator + s.originalFileName,
+              url: dirPrefix + separator + s.originalFileName
+          }));
+
+          finalParsed.sfx = parsed.sfx.map((s: SfxItem) => {
+              if(!s) return s;
+              return {
+                  ...s,
+                  path: dirPrefix + separator + s.originalFileName,
+                  url: dirPrefix + separator + s.originalFileName
+              }
+          });
+      }
+
+      setPathFixModal({isOpen: false, data: null});
+
+      if (isAndroid) {
+          const { resolvedSongs, resolvedSfx } = await resolvePathsForLoad(finalParsed, currentPath, rootDir);
+          onPlaylistLoaded(resolvedSongs, resolvedSfx, fileName, currentPath, rootDir);
+      } else {
+          // Windows / Web Logic Re-run with fixed paths
+          const resolveBlob = (nameOrPath: string) => {
+                if (!isAndroid && (nameOrPath.includes(':\\') || nameOrPath.startsWith('/'))) {
+                    const cleanPath = nameOrPath.replace(/\\/g, '/');
+                    return cleanPath.startsWith('file:') ? cleanPath : `file:///${cleanPath}`;
+                }
+                const clean = extractFileName(nameOrPath);
+                const match = webFiles?.find((f: File) => f.name === clean);
+                return match ? URL.createObjectURL(match) : nameOrPath;
+          };
+
+          const songs = finalParsed.songs.map((s: Song) => ({
+                ...s,
+                url: resolveBlob(s.path || s.originalFileName || s.url)
+          }));
+
+          const sfx = finalParsed.sfx.map((s: SfxItem) => {
+                if(!s) return s;
+                return { ...s, url: resolveBlob(s.path || s.originalFileName || s.url) };
+          });
+
+          onPlaylistLoaded(songs, sfx, fileName);
+      }
+  };
+
+  // RENDER EXPLORER VIEW (Android Initialized)
   if (isAndroid && explorerInitialized) {
       return (
           <div className="flex flex-col h-full bg-slate-950 text-slate-200 relative">
+              {/* PATH FIX MODAL (ANDROID) */}
+              {pathFixModal.isOpen && (
+                  <div className="absolute inset-0 z-50 bg-black/80 flex items-center justify-center p-6">
+                      <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 max-w-sm w-full text-center shadow-2xl">
+                          <AlertOctagon className="w-12 h-12 text-amber-500 mx-auto mb-4" />
+                          <h3 className="text-xl font-bold text-white mb-2">{language === 'it' ? "Discrepanza Percorso" : "Path Mismatch"}</h3>
+                          <p className="text-slate-300 text-sm mb-6 leading-relaxed">
+                              {language === 'it' 
+                                  ? "La playlist sembra provenire da un'altra cartella o dispositivo. Vuoi aggiornare i percorsi dei file alla cartella corrente?"
+                                  : "The playlist seems to come from another folder. Do you want to update file paths to current folder?"}
+                          </p>
+                          <div className="flex gap-3 justify-center">
+                              <button onClick={() => performPathFix(false)} className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg font-bold border border-slate-700">No</button>
+                              <button onClick={() => performPathFix(true)} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg font-bold shadow-lg">Sì</button>
+                          </div>
+                      </div>
+                  </div>
+              )}
+
               <div className="p-4 bg-slate-900 border-b border-slate-800 flex items-center justify-between shrink-0">
                   <div className="flex items-center gap-2 overflow-hidden">
                       <FolderOpen className="w-6 h-6 text-emerald-500" />
@@ -488,11 +660,22 @@ const FileLoader: React.FC<FileLoaderProps> = ({
                           {dirContents.length === 0 && (
                               <div className="text-center py-10 text-slate-600">{t.empty_folder}</div>
                           )}
+                          
+                          {/* ANDROID PERMISSION HINT BOX */}
+                          {isAndroid && !saveMode && !pickerMode && (
+                            <div className="mx-2 mt-6 p-4 bg-indigo-900/20 border border-indigo-500/30 rounded-xl flex items-start gap-3">
+                                <Info className="w-5 h-5 text-indigo-400 shrink-0 mt-0.5" />
+                                <div className="text-sm text-indigo-200">
+                                    <strong className="block mb-1 text-indigo-300">{t.android_permission_hint_title}</strong>
+                                    <p className="opacity-90 text-xs leading-relaxed">{t.android_permission_hint_text}</p>
+                                </div>
+                            </div>
+                          )}
                       </div>
                   )}
               </div>
 
-              {/* SAVE AS FOOTER */}
+              {/* SAVE AS FOOTER (ANDROID) */}
               {saveMode && (
                   <div className="absolute bottom-0 left-0 w-full p-4 bg-slate-900 border-t border-slate-800 shrink-0 flex items-center gap-4 z-20 shadow-[0_-5px_15px_rgba(0,0,0,0.5)]">
                     <div className="flex-1">
@@ -528,10 +711,101 @@ const FileLoader: React.FC<FileLoaderProps> = ({
       );
   }
 
-  // RENDER LANDING VIEW
+  // --- NEW: RENDER WEB/DESKTOP SAVE UI (Electron/Browser) ---
+  if (!isAndroid && saveMode) {
+      return (
+          <div className="flex flex-col h-full bg-slate-950 items-center justify-center p-6 relative">
+              {/* Close Button */}
+              {onClose && (
+                <button 
+                    onClick={onClose} 
+                    className="absolute top-4 right-4 z-50 p-3 rounded-full bg-slate-800 text-slate-400 hover:text-white hover:bg-red-900/50 hover:border-red-500 border border-slate-700 transition-all shadow-lg"
+                    title={t.btn_close}
+                >
+                    <X className="w-6 h-6" />
+                </button>
+              )}
+
+              <div className="max-w-md w-full bg-slate-900 border border-slate-800 rounded-2xl p-8 shadow-2xl relative overflow-hidden">
+                  <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-emerald-500 to-teal-400"></div>
+                  
+                  <div className="flex items-center gap-3 mb-8 text-emerald-400">
+                      <Save className="w-8 h-8" />
+                      <h2 className="text-2xl font-bold text-white tracking-tight">{t.save_playlist}</h2>
+                  </div>
+                  
+                  <div className="mb-8">
+                      <label className="block text-xs text-slate-500 font-bold uppercase mb-2 tracking-wider">{t.file_name_label}</label>
+                      <div className="relative">
+                        <input 
+                            type="text" 
+                            value={saveFileName}
+                            onChange={(e) => setSaveFileName(e.target.value)}
+                            onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                    if(onSave) {
+                                        let finalName = saveFileName;
+                                        if(!finalName.toLowerCase().endsWith('.txt')) finalName += ".txt";
+                                        // On desktop web/electron, path is irrelevant for 'blob' download, but we pass filename
+                                        onSave(finalName, finalName, rootDirectory);
+                                    }
+                                }
+                            }}
+                            className="w-full bg-slate-950 border border-slate-700 rounded-xl py-4 px-4 text-white font-mono text-lg focus:outline-none focus:border-emerald-500 transition-colors placeholder-slate-700"
+                            placeholder="playlist.txt"
+                            autoFocus
+                        />
+                        <div className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-600 text-sm font-bold pointer-events-none select-none">
+                            .txt
+                        </div>
+                      </div>
+                      <p className="text-[10px] text-slate-500 mt-3 flex items-center gap-1.5">
+                          <Info className="w-3 h-3" />
+                          {language === 'it' ? 'Il file verrà scaricato nella cartella Download.' : 'File will be downloaded to your Downloads folder.'}
+                      </p>
+                  </div>
+
+                  <button 
+                      onClick={() => {
+                          if(onSave) {
+                              let finalName = saveFileName;
+                              if(!finalName.toLowerCase().endsWith('.txt')) finalName += ".txt";
+                              onSave(finalName, finalName, rootDirectory);
+                          }
+                      }}
+                      className="w-full py-4 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-bold transition-all shadow-lg shadow-emerald-900/20 active:scale-95 flex items-center justify-center gap-2 group"
+                  >
+                      <Save className="w-5 h-5 group-hover:scale-110 transition-transform" />
+                      {t.btn_save}
+                  </button>
+              </div>
+          </div>
+      );
+  }
+
+  // RENDER LANDING VIEW (DEFAULT WEB LOAD)
   return (
     <div className="flex flex-col h-full bg-slate-950 items-center justify-center p-6 relative overflow-hidden">
         
+        {/* PATH FIX MODAL (WEB/WINDOWS) */}
+        {pathFixModal.isOpen && (
+            <div className="absolute inset-0 z-50 bg-black/80 flex items-center justify-center p-6 animate-in fade-in duration-200">
+                <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 max-w-sm w-full text-center shadow-2xl">
+                    <AlertOctagon className="w-12 h-12 text-amber-500 mx-auto mb-4" />
+                    <h3 className="text-xl font-bold text-white mb-2">{language === 'it' ? "Discrepanza Percorso" : "Path Mismatch"}</h3>
+                    <p className="text-slate-300 text-sm mb-6 leading-relaxed">
+                        {language === 'it' 
+                            ? "La playlist sembra provenire da un'altra cartella. Vuoi aggiornare i percorsi dei file alla cartella corrente?"
+                            : "The playlist seems to come from another folder. Do you want to update file paths to current folder?"}
+                    </p>
+                    <div className="flex gap-3 justify-center">
+                        <button onClick={() => performPathFix(false)} className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg font-bold border border-slate-700">No</button>
+                        <button onClick={() => performPathFix(true)} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg font-bold shadow-lg">Sì</button>
+                    </div>
+                </div>
+            </div>
+        )}
+
         {/* Close Button if Modal - VISIBLE IN LANDING AS WELL */}
         {onClose && (
             <button 

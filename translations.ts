@@ -16,6 +16,8 @@ export const translations = {
     empty_folder: "Cartella vuota",
     error_read_folder: "Impossibile leggere la cartella",
     error_permission: "Permesso di archiviazione negato",
+    android_permission_hint_title: "Non vedi i file Playlist (.txt)?",
+    android_permission_hint_text: "Android nasconde i file di testo per sicurezza. Devi abilitare manualmente 'Gestione di tutti i file' nelle Impostazioni del Tablet > App > Regia Musiche > Permessi (o Accesso Speciale).",
     
     // 2. Playlist & Modes
     mode_editing: "Editing",
@@ -120,6 +122,8 @@ export const translations = {
     empty_folder: "Empty folder",
     error_read_folder: "Cannot read folder",
     error_permission: "Storage permission denied",
+    android_permission_hint_title: "Can't see Playlist (.txt) files?",
+    android_permission_hint_text: "Android hides text files for security. You must manually enable 'All Files Access' in Tablet Settings -> Apps -> Regia Musiche -> Permissions (or Special Access).",
     
     // 2. Playlist & Modes
     mode_editing: "Editing",

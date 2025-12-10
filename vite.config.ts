@@ -3,8 +3,10 @@ import react from '@vitejs/plugin-react';
 
 export default defineConfig({
   plugins: [react()],
+  // 'base: ./' assicura che Electron trovi i file js/css
+  base: './', 
   build: {
-    outDir: 'dist', // Capacitor cerca questa cartella
+    outDir: 'dist', 
     emptyOutDir: true,
   },
 });

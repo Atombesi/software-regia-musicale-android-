@@ -119,7 +119,7 @@ const InfoModal: React.FC<InfoModalProps> = ({ isOpen, onClose, t }) => {
                             <div className="w-12 h-12 bg-slate-800 rounded-xl flex items-center justify-center border border-slate-700 overflow-hidden relative shrink-0">
                                 <Clapperboard className="w-6 h-6 text-emerald-400 absolute z-0" />
                                 <img 
-                                    src="/icona_app.png" 
+                                    src="./icona_app.png" 
                                     className="w-full h-full object-cover relative z-10" 
                                     alt="Icon"
                                     onError={(e) => { e.currentTarget.style.display = 'none'; }} 
@@ -138,7 +138,7 @@ const InfoModal: React.FC<InfoModalProps> = ({ isOpen, onClose, t }) => {
                         <div className="w-32 h-32 md:w-40 md:h-40 shrink-0 rounded-2xl bg-slate-800 border-2 border-slate-700 overflow-hidden shadow-xl flex items-center justify-center relative">
                             <User className="w-20 h-20 text-slate-600 absolute z-0" />
                             <img 
-                                src="/foto_andrea.jpg" 
+                                src="./foto_andrea.jpg" 
                                 className="w-full h-full object-cover relative z-10" 
                                 alt="Andrea Tombesi"
                                 onError={(e) => { e.currentTarget.style.display = 'none'; }} 
@@ -460,6 +460,9 @@ const App: React.FC = () => {
   const [appMode, setAppMode] = useState<AppMode>('editing');
   const [showWaveform, setShowWaveform] = useState(true); 
   
+  // COMPACT VIEW STATE
+  const [isCompactView, setIsCompactView] = useState(false);
+
   const [activeSfxIndices, setActiveSfxIndices] = useState<Set<number>>(new Set());
   const activeSfxAudioRefs = useRef<{[index: number]: HTMLAudioElement}>({});
 
@@ -1183,15 +1186,24 @@ const App: React.FC = () => {
 
   // -- GENERATE PLAYLIST TEXT HELPER --
   const generatePlaylistFileContent = () => {
+      const isAndroid = Capacitor.getPlatform() === 'android';
       let content = "";
       songs.forEach(s => {
           // Use FULL PATH first, then Fallback to filename/URL
-          const path = s.path || s.originalFileName || s.url; 
+          let path = s.path || s.originalFileName || s.url;
+          // FORCE BACKSLASH FOR WINDOWS
+          if (!isAndroid) {
+              path = path.replace(/\//g, '\\');
+          }
           content += `${s.title};${path};${s.trimStart || 0};${s.trimEnd || 0};${s.hasFadeOut ? '1' : '0'};${s.customGain || 1.0};${s.note || ''}\n`;
       });
       sfxItems.forEach((sfx, idx) => {
           if (sfx && sfx.url) {
-             const path = sfx.path || sfx.originalFileName || sfx.url;
+             let path = sfx.path || sfx.originalFileName || sfx.url;
+             // FORCE BACKSLASH FOR WINDOWS
+             if (!isAndroid) {
+                 path = path.replace(/\//g, '\\');
+             }
              content += `SFX;${idx};${sfx.label};${path};${sfx.trimStart || 0};${sfx.trimEnd || 0};${sfx.hasFadeOut ? '1' : '0'};${sfx.customGain || 1.0}\n`;
           }
       });
@@ -1376,6 +1388,8 @@ const App: React.FC = () => {
                 language={language}
                 onLanguageRequest={() => setLangModalOpen(true)}
                 playlistFileName={sourceFileName} // Pass Filename
+                isCompactView={isCompactView}
+                onToggleCompactView={() => setIsCompactView(!isCompactView)}
              />
           </div>
 
@@ -1419,141 +1433,148 @@ const App: React.FC = () => {
              </div>
 
              {/* 2. EDITOR (Hidden Header in Live) */}
-             <div className="shrink-0 p-3 border-b border-slate-800 bg-slate-800/20 flex flex-col gap-2">
-                 {appMode === 'editing' && (
-                    <div className="flex items-center gap-2">
-                        <Scissors className="w-4 h-4 text-emerald-400" />
-                        <span className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
-                            Editor {editingSfxIndex !== null ? 'SFX' : (language === 'it' ? 'Traccia' : 'Track')}
-                            {editingTarget && (
-                                <span className="text-emerald-400 font-normal normal-case truncate max-w-[200px]">
-                                    ({editingSfxIndex !== null ? (editingTarget as SfxItem).label : (editingTarget as Song).title})
-                                </span>
-                            )}
-                        </span>
-                    </div>
-                 )}
-                 
-                 {/* ROW 1: TIME CONTROLS */}
-                 <div className="flex items-center justify-center gap-4 w-full">
-                     
-                     {/* START - UPDATED LAYOUT: Button LEFT of Time Box */}
-                     <div className="flex flex-col items-center gap-1">
-                         <span className="text-[9px] text-slate-500 font-bold uppercase">{t.time_start}</span>
-                         <div className="flex items-center gap-2">
-                            {/* MARK IN BUTTON (LEFT) - OUTSIDE KEYS */}
-                            <button onClick={() => handleCaptureMark('in')} disabled={appMode !== 'editing'} className="p-2.5 bg-slate-800 border border-slate-600 rounded-lg text-emerald-400 shadow-md hover:bg-emerald-900/50 hover:text-white disabled:opacity-0 transition-colors" title={t.mark_in}><MapPin className="w-5 h-5" /></button>
-
-                            <div className="relative flex items-center bg-slate-900 rounded-lg border border-slate-700 p-0.5 gap-0">
-                                <button onClick={() => handleManualAdjust('start', -1)} disabled={appMode !== 'editing'} className="p-1.5 hover:bg-slate-800 rounded-l-md text-slate-400 hover:text-white disabled:opacity-30"><Minus className="w-3 h-3" /></button>
-                                <div onClick={() => handleOpenTimeModal('start')} className="w-20 bg-transparent text-center font-mono text-emerald-400 font-bold text-sm cursor-pointer py-1 select-none">
-                                    {formatTimeDetail(currentTrimStartDisplay)}
-                                </div>
-                                <button onClick={() => handleManualAdjust('start', +1)} disabled={appMode !== 'editing'} className="p-1.5 hover:bg-slate-800 rounded-r-md text-slate-400 hover:text-white disabled:opacity-30"><Plus className="w-3 h-3" /></button>
-                            </div>
-                         </div>
-                     </div>
-
-                     {/* DURATION */}
-                     <div className="flex flex-col items-center gap-1">
-                         <span className="text-[9px] text-slate-500 font-bold uppercase">{t.time_duration}</span>
-                         <div className="flex items-center bg-slate-800 rounded-lg border border-slate-600 p-0.5 shadow-inner gap-0 h-[34px]">
-                             <button onClick={() => handleManualAdjust('duration', -1)} disabled={appMode !== 'editing'} className="p-1.5 hover:bg-slate-700 rounded-l-md text-slate-400 hover:text-white disabled:opacity-30"><Minus className="w-3 h-3" /></button>
-                             <div onClick={() => handleOpenTimeModal('duration')} className="w-20 bg-transparent text-center font-mono text-white font-black text-sm cursor-pointer py-1 select-none">
-                                 {formatTimeDetail(currentDurationDisplay)}
-                             </div>
-                             <button onClick={() => handleManualAdjust('duration', +1)} disabled={appMode !== 'editing'} className="p-1.5 hover:bg-slate-700 rounded-r-md text-slate-400 hover:text-white disabled:opacity-30"><Plus className="w-3 h-3" /></button>
-                         </div>
-                     </div>
-
-                     {/* END - UPDATED LAYOUT: Button RIGHT of Time Box */}
-                     <div className="flex flex-col items-center gap-1">
-                         <span className="text-[9px] text-slate-500 font-bold uppercase">{t.time_end}</span>
-                         <div className="flex items-center gap-2">
-                            <div className="relative flex items-center bg-slate-900 rounded-lg border border-slate-700 p-0.5 gap-0">
-                                <button onClick={() => handleManualAdjust('end', -1)} disabled={appMode !== 'editing'} className="p-1.5 hover:bg-slate-800 rounded-l-md text-slate-400 hover:text-white disabled:opacity-30"><Minus className="w-3 h-3" /></button>
-                                <div onClick={() => handleOpenTimeModal('end')} className="w-20 bg-transparent text-center font-mono text-red-400 font-bold text-sm cursor-pointer py-1 select-none">
-                                    {formatTimeDetail(currentTrimEndDisplay)}
-                                </div>
-                                <button onClick={() => handleManualAdjust('end', +1)} disabled={appMode !== 'editing'} className="p-1.5 hover:bg-slate-800 rounded-r-md text-slate-400 hover:text-white disabled:opacity-30"><Plus className="w-3 h-3" /></button>
-                            </div>
-
-                            {/* MARK OUT BUTTON (RIGHT) - OUTSIDE KEYS */}
-                            <button onClick={() => handleCaptureMark('out')} disabled={appMode !== 'editing'} className="p-2.5 bg-slate-800 border border-slate-600 rounded-lg text-red-400 shadow-md hover:bg-red-900/50 hover:text-white disabled:opacity-0 transition-colors" title={t.mark_out}><MapPin className="w-5 h-5" /></button>
-                         </div>
-                     </div>
-                 </div>
-
-                 {/* ROW 2: PLAY/PAUSE -> RESET -> VOLUME -> FADE -> NOTE -> COMMIT */}
-                 {appMode === 'editing' && (
-                    <>
-                        <div className="w-full h-px bg-slate-800/50" />
-                        <div className="flex items-center justify-center gap-4 w-full animate-in fade-in slide-in-from-top-2">
-                             
-                             {/* 0. EDITOR PLAY/PAUSE (RAW) */}
-                             <button
-                                onClick={playerState.isPlaying && playbackSource === 'waveform' ? handlePause : handleEditorPlay}
-                                className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${playerState.isPlaying && playbackSource === 'waveform' ? 'bg-indigo-500/20 text-indigo-400 border border-indigo-500/50' : 'bg-slate-800 text-slate-300 border border-slate-600 hover:text-white hover:border-white'}`}
-                                title={t.play_raw_tooltip}
-                             >
-                                {playerState.isPlaying && playbackSource === 'waveform' ? <PauseCircle className="w-6 h-6" /> : <PlayCircle className="w-6 h-6" />}
-                             </button>
-
-                             {/* 1. RESET */}
-                             <button onClick={handleResetTrackConditions} className="h-10 w-10 flex items-center justify-center rounded-lg border border-slate-700 bg-slate-900 text-slate-500 hover:text-white hover:border-white transition-all shadow-sm" title={t.reset_track_tooltip}><RefreshCcw className="w-4 h-4" /></button>
-                             
-                             {/* 2. VOLUME */}
-                             <div className="flex items-center gap-3 bg-slate-900 p-2 rounded-xl border border-slate-700">
-                                 <span className="text-[10px] text-slate-500 font-bold uppercase w-12 text-right">{t.volume}</span>
-                                 <input type="range" min="0" max="1" step="0.01" value={editingTarget?.customGain || 1.0} onChange={(e) => updateTargetItem(i => ({...i, customGain: parseFloat(e.target.value)}))} className="w-32 h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-indigo-400 [&::-webkit-slider-thumb]:rounded-full hover:[&::-webkit-slider-thumb]:bg-white" />
-                                 <span className="font-mono text-xs w-10 text-center text-indigo-400 font-bold">{Math.round((editingTarget?.customGain || 1)*100)}%</span>
-                             </div>
-
-                             {/* 3. FADE */}
-                             <button 
-                                onClick={() => updateTargetItem(i => ({...i, hasFadeOut: !i.hasFadeOut}))}
-                                className={`h-10 px-4 rounded-lg border flex items-center gap-2 transition-all ${editingTarget?.hasFadeOut ? 'bg-rose-900/40 border-rose-500 text-rose-400' : 'bg-slate-900 border-slate-700 text-slate-500 opacity-60'}`}
-                             >
-                                 <Wind className="w-4 h-4" />
-                                 <span className="text-xs font-bold">{t.fade_btn}</span>
-                             </button>
-
-                             {/* 3.5. NOTE BUTTON (NEW) - ONLY FOR SONGS */}
-                             {editingSfxIndex === null && (
-                                 <button 
-                                    onClick={() => setNoteModalOpen(true)}
-                                    className="h-10 w-10 ml-2 rounded-xl border border-slate-600 bg-slate-800 text-amber-400 hover:text-white hover:border-amber-500 transition-all flex items-center justify-center"
-                                    title={t.edit_note_tooltip}
-                                 >
-                                     <StickyNote className="w-5 h-5" />
-                                 </button>
-                             )}
-
-                             {/* 4. COMMIT / SAVE LOCAL */}
-                             <button
-                                ref={localSaveBtnRef}
-                                onClick={handleLocalCommit}
-                                className="h-10 w-10 ml-2 rounded-xl border border-slate-600 bg-slate-800 text-slate-400 hover:text-white hover:border-emerald-500 transition-all flex items-center justify-center"
-                                title={t.commit_tooltip}
-                             >
-                                 <Save className="w-5 h-5" />
-                             </button>
+             {/* CONDITIONAL RENDER: Hide entirely in Compact Live Mode */}
+             {(!isCompactView || appMode === 'editing') && (
+                 <div className="shrink-0 p-3 border-b border-slate-800 bg-slate-800/20 flex flex-col gap-2">
+                     {appMode === 'editing' && (
+                        <div className="flex items-center gap-2">
+                            <Scissors className="w-4 h-4 text-emerald-400" />
+                            <span className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
+                                Editor {editingSfxIndex !== null ? 'SFX' : (language === 'it' ? 'Traccia' : 'Track')}
+                                {editingTarget && (
+                                    <span className="text-emerald-400 font-normal normal-case truncate max-w-[200px]">
+                                        ({editingSfxIndex !== null ? (editingTarget as SfxItem).label : (editingTarget as Song).title})
+                                    </span>
+                                )}
+                            </span>
                         </div>
-                    </>
-                 )}
-             </div>
+                     )}
+                     
+                     {/* ROW 1: TIME CONTROLS */}
+                     <div className="flex items-center justify-center gap-4 w-full">
+                         
+                         {/* START */}
+                         <div className="flex flex-col items-center gap-1">
+                             <span className="text-[9px] text-slate-500 font-bold uppercase">{t.time_start}</span>
+                             <div className="flex items-center gap-2">
+                                {/* MARK IN BUTTON (LEFT) - OUTSIDE KEYS */}
+                                <button onClick={() => handleCaptureMark('in')} disabled={appMode !== 'editing'} className="p-2.5 bg-slate-800 border border-slate-600 rounded-lg text-emerald-400 shadow-md hover:bg-emerald-900/50 hover:text-white disabled:opacity-0 transition-colors" title={t.mark_in}><MapPin className="w-5 h-5" /></button>
+
+                                <div className="relative flex items-center bg-slate-900 rounded-lg border border-slate-700 p-0.5 gap-0">
+                                    <button onClick={() => handleManualAdjust('start', -1)} disabled={appMode !== 'editing'} className="p-1.5 hover:bg-slate-800 rounded-l-md text-slate-400 hover:text-white disabled:opacity-30"><Minus className="w-3 h-3" /></button>
+                                    <div onClick={() => handleOpenTimeModal('start')} className="w-20 bg-transparent text-center font-mono text-emerald-400 font-bold text-sm cursor-pointer py-1 select-none">
+                                        {formatTimeDetail(currentTrimStartDisplay)}
+                                    </div>
+                                    <button onClick={() => handleManualAdjust('start', +1)} disabled={appMode !== 'editing'} className="p-1.5 hover:bg-slate-800 rounded-r-md text-slate-400 hover:text-white disabled:opacity-30"><Plus className="w-3 h-3" /></button>
+                                </div>
+                             </div>
+                         </div>
+
+                         {/* DURATION */}
+                         <div className="flex flex-col items-center gap-1">
+                             <span className="text-[9px] text-slate-500 font-bold uppercase">{t.time_duration}</span>
+                             <div className="flex items-center bg-slate-800 rounded-lg border border-slate-600 p-0.5 shadow-inner gap-0 h-[34px]">
+                                 <button onClick={() => handleManualAdjust('duration', -1)} disabled={appMode !== 'editing'} className="p-1.5 hover:bg-slate-700 rounded-l-md text-slate-400 hover:text-white disabled:opacity-30"><Minus className="w-3 h-3" /></button>
+                                 <div onClick={() => handleOpenTimeModal('duration')} className="w-20 bg-transparent text-center font-mono text-white font-black text-sm cursor-pointer py-1 select-none">
+                                     {formatTimeDetail(currentDurationDisplay)}
+                                 </div>
+                                 <button onClick={() => handleManualAdjust('duration', +1)} disabled={appMode !== 'editing'} className="p-1.5 hover:bg-slate-700 rounded-r-md text-slate-400 hover:text-white disabled:opacity-30"><Plus className="w-3 h-3" /></button>
+                             </div>
+                         </div>
+
+                         {/* END */}
+                         <div className="flex flex-col items-center gap-1">
+                             <span className="text-[9px] text-slate-500 font-bold uppercase">{t.time_end}</span>
+                             <div className="flex items-center gap-2">
+                                <div className="relative flex items-center bg-slate-900 rounded-lg border border-slate-700 p-0.5 gap-0">
+                                    <button onClick={() => handleManualAdjust('end', -1)} disabled={appMode !== 'editing'} className="p-1.5 hover:bg-slate-800 rounded-l-md text-slate-400 hover:text-white disabled:opacity-30"><Minus className="w-3 h-3" /></button>
+                                    <div onClick={() => handleOpenTimeModal('end')} className="w-20 bg-transparent text-center font-mono text-red-400 font-bold text-sm cursor-pointer py-1 select-none">
+                                        {formatTimeDetail(currentTrimEndDisplay)}
+                                    </div>
+                                    <button onClick={() => handleManualAdjust('end', +1)} disabled={appMode !== 'editing'} className="p-1.5 hover:bg-slate-800 rounded-r-md text-slate-400 hover:text-white disabled:opacity-30"><Plus className="w-3 h-3" /></button>
+                                </div>
+
+                                {/* MARK OUT BUTTON (RIGHT) - OUTSIDE KEYS */}
+                                <button onClick={() => handleCaptureMark('out')} disabled={appMode !== 'editing'} className="p-2.5 bg-slate-800 border border-slate-600 rounded-lg text-red-400 shadow-md hover:bg-red-900/50 hover:text-white disabled:opacity-0 transition-colors" title={t.mark_out}><MapPin className="w-5 h-5" /></button>
+                             </div>
+                         </div>
+                     </div>
+
+                     {/* ROW 2: PLAY/PAUSE -> RESET -> VOLUME -> FADE -> NOTE -> COMMIT */}
+                     {appMode === 'editing' && (
+                        <>
+                            <div className="w-full h-px bg-slate-800/50" />
+                            <div className="flex items-center justify-center gap-4 w-full animate-in fade-in slide-in-from-top-2">
+                                 
+                                 {/* 0. EDITOR PLAY/PAUSE (RAW) */}
+                                 <button
+                                    onClick={playerState.isPlaying && playbackSource === 'waveform' ? handlePause : handleEditorPlay}
+                                    className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${playerState.isPlaying && playbackSource === 'waveform' ? 'bg-indigo-500/20 text-indigo-400 border border-indigo-500/50' : 'bg-slate-800 text-slate-300 border border-slate-600 hover:text-white hover:border-white'}`}
+                                    title={t.play_raw_tooltip}
+                                 >
+                                    {playerState.isPlaying && playbackSource === 'waveform' ? <PauseCircle className="w-6 h-6" /> : <PlayCircle className="w-6 h-6" />}
+                                 </button>
+
+                                 {/* 1. RESET */}
+                                 <button onClick={handleResetTrackConditions} className="h-10 w-10 flex items-center justify-center rounded-lg border border-slate-700 bg-slate-900 text-slate-500 hover:text-white hover:border-white transition-all shadow-sm" title={t.reset_track_tooltip}><RefreshCcw className="w-4 h-4" /></button>
+                                 
+                                 {/* 2. VOLUME */}
+                                 <div className="flex items-center gap-3 bg-slate-900 p-2 rounded-xl border border-slate-700">
+                                     <span className="text-[10px] text-slate-500 font-bold uppercase w-12 text-right">{t.volume}</span>
+                                     <input type="range" min="0" max="1" step="0.01" value={editingTarget?.customGain || 1.0} onChange={(e) => updateTargetItem(i => ({...i, customGain: parseFloat(e.target.value)}))} className="w-32 h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-indigo-400 [&::-webkit-slider-thumb]:rounded-full hover:[&::-webkit-slider-thumb]:bg-white" />
+                                     <span className="font-mono text-xs w-10 text-center text-indigo-400 font-bold">{Math.round((editingTarget?.customGain || 1)*100)}%</span>
+                                 </div>
+
+                                 {/* 3. FADE */}
+                                 <button 
+                                    onClick={() => updateTargetItem(i => ({...i, hasFadeOut: !i.hasFadeOut}))}
+                                    className={`h-10 px-4 rounded-lg border flex items-center gap-2 transition-all ${editingTarget?.hasFadeOut ? 'bg-rose-900/40 border-rose-500 text-rose-400' : 'bg-slate-900 border-slate-700 text-slate-500 opacity-60'}`}
+                                 >
+                                     <Wind className="w-4 h-4" />
+                                     <span className="text-xs font-bold">{t.fade_btn}</span>
+                                 </button>
+
+                                 {/* 3.5. NOTE BUTTON (NEW) - ONLY FOR SONGS */}
+                                 {editingSfxIndex === null && (
+                                     <button 
+                                        onClick={() => setNoteModalOpen(true)}
+                                        className="h-10 w-10 ml-2 rounded-xl border border-slate-600 bg-slate-800 text-amber-400 hover:text-white hover:border-amber-500 transition-all flex items-center justify-center"
+                                        title={t.edit_note_tooltip}
+                                     >
+                                         <StickyNote className="w-5 h-5" />
+                                     </button>
+                                 )}
+
+                                 {/* 4. COMMIT / SAVE LOCAL */}
+                                 <button
+                                    ref={localSaveBtnRef}
+                                    onClick={handleLocalCommit}
+                                    className="h-10 w-10 ml-2 rounded-xl border border-slate-600 bg-slate-800 text-slate-400 hover:text-white hover:border-emerald-500 transition-all flex items-center justify-center"
+                                    title={t.commit_tooltip}
+                                 >
+                                     <Save className="w-5 h-5" />
+                                 </button>
+                            </div>
+                        </>
+                     )}
+                 </div>
+             )}
 
              {/* 3. SFX GRID */}
-             <div className="flex-1 flex flex-col min-h-0 bg-slate-900/50">
+             {/* Dynamic Layout: If Compact Live, change flex-1/grid to shrink-0/flex-row */}
+             <div className={`flex flex-col min-h-0 bg-slate-900/50 ${isCompactView && appMode === 'presentation' ? 'shrink-0 border-b border-slate-800' : 'flex-1'}`}>
                  {appMode === 'editing' && (
                     <div className="p-2 border-b border-slate-800 flex items-center gap-2 bg-slate-800/30">
                         <Zap className="w-4 h-4 text-amber-400" />
                         <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">{t.sfx_section}</span>
                     </div>
                  )}
-                 <div className="flex-1 p-2 overflow-y-auto">
-                     <div className="grid grid-cols-3 gap-2 h-full">
+                 <div className={`overflow-y-auto ${isCompactView && appMode === 'presentation' ? 'p-1' : 'flex-1 p-2'}`}>
+                     <div className={`${isCompactView && appMode === 'presentation' ? 'flex flex-row w-full justify-evenly items-center' : 'grid grid-cols-3 gap-2 h-full'}`}>
                          {sfxItems.map((sfx, idx) => {
+                             // COMPACT FILTER: Hide empty slots in Compact Mode
+                             if (isCompactView && appMode === 'presentation' && (!sfx || !sfx.url)) return null;
+
                              const isPlaying = activeSfxIndices.has(idx); // Playback state (Live/Fire&Forget)
                              const isEditingThis = editingSfxIndex === idx; // Edit state
                              const hasFile = sfx && sfx.url;
@@ -1565,7 +1586,8 @@ const App: React.FC = () => {
                                  <button
                                     key={idx}
                                     onClick={() => handleSfxClick(idx)}
-                                    className={`relative group rounded-xl border-2 flex flex-col items-center justify-center p-2 transition-all active:scale-95 shadow-lg h-20
+                                    className={`relative group rounded-xl border-2 flex flex-col items-center justify-center p-2 transition-all active:scale-95 shadow-lg
+                                        ${isCompactView && appMode === 'presentation' ? 'w-24 h-12' : 'h-20'} 
                                         ${hasFile
                                             ? (isPlaying 
                                                 ? 'bg-lime-900/40 border-lime-500/80 shadow-[0_0_15px_rgba(132,204,22,0.2)]' 
@@ -1578,19 +1600,23 @@ const App: React.FC = () => {
                                      {hasFile ? (
                                          <>
                                             <div className="flex items-center gap-2 mb-1">
-                                                <div className={`w-6 h-6 rounded-full flex items-center justify-center transition-colors ${isPlaying ? 'bg-lime-500 text-slate-900' : (isEditingThis ? 'bg-indigo-500 text-white' : 'bg-amber-500/10 group-hover:bg-amber-500/20')}`}>
+                                                <div className={`rounded-full flex items-center justify-center transition-colors 
+                                                    ${isCompactView && appMode === 'presentation' ? 'w-4 h-4' : 'w-6 h-6'}
+                                                    ${isPlaying ? 'bg-lime-500 text-slate-900' : (isEditingThis ? 'bg-indigo-500 text-white' : 'bg-amber-500/10 group-hover:bg-amber-500/20')}`}>
                                                     {isPlaying ? <Pause className="w-3 h-3 fill-current" /> : (isEditingThis ? <Edit2 className="w-3 h-3" /> : <Zap className="w-3 h-3 text-amber-500" />)}
                                                 </div>
                                                 
                                                 {/* MOVED STATUS ICONS TO TOP, NEXT TO MAIN ICON */}
-                                                <div className="flex items-center gap-0.5 opacity-80">
-                                                    {hasGain && <SignalHigh className={`w-3 h-3 ${isEditingThis ? 'text-indigo-300' : 'text-slate-400'}`} />}
-                                                    {hasCuts && <Scissors className={`w-3 h-3 ${isEditingThis ? 'text-indigo-300' : 'text-slate-400'}`} />}
-                                                    {hasFade && <Wind className={`w-3 h-3 ${isEditingThis ? 'text-indigo-300' : 'text-slate-400'}`} />}
-                                                </div>
+                                                {!isCompactView && (
+                                                    <div className="flex items-center gap-0.5 opacity-80">
+                                                        {hasGain && <SignalHigh className={`w-3 h-3 ${isEditingThis ? 'text-indigo-300' : 'text-slate-400'}`} />}
+                                                        {hasCuts && <Scissors className={`w-3 h-3 ${isEditingThis ? 'text-indigo-300' : 'text-slate-400'}`} />}
+                                                        {hasFade && <Wind className={`w-3 h-3 ${isEditingThis ? 'text-indigo-300' : 'text-slate-400'}`} />}
+                                                    </div>
+                                                )}
                                             </div>
 
-                                            <span className={`text-xs font-bold truncate w-full text-center ${isPlaying ? 'text-lime-400' : (isEditingThis ? 'text-indigo-300' : 'text-white')}`}>{sfx.label || `SFX ${idx+1}`}</span>
+                                            <span className={`font-bold truncate w-full text-center ${isCompactView && appMode === 'presentation' ? 'text-[10px] leading-none' : 'text-xs'} ${isPlaying ? 'text-lime-400' : (isEditingThis ? 'text-indigo-300' : 'text-white')}`}>{sfx.label || `SFX ${idx+1}`}</span>
                                             
                                             {/* DELETE BTN (Editing only) */}
                                             {appMode === 'editing' && (
@@ -1618,7 +1644,7 @@ const App: React.FC = () => {
              {/* 4. DIRECTOR NOTE (LIVE ONLY) - Removed from Editing View */}
              {editingSfxIndex === null && appMode === 'presentation' && (
                 <div className="shrink-0 bg-slate-900 p-3 border-t border-slate-800">
-                    <div className="flex items-start gap-3 h-16">
+                    <div className={`flex items-start gap-3 ${isCompactView ? 'h-24' : 'h-16'}`}>
                         
                         {/* NOTE ICON BUTTON (STATIC IN LIVE) */}
                         <button 
@@ -1634,7 +1660,7 @@ const App: React.FC = () => {
                                 ? 'bg-amber-500/10 border border-amber-500/30 text-amber-200' 
                                 : 'bg-slate-800/50 border border-slate-800 text-slate-600 italic'
                             }`}>
-                                <span className="line-clamp-2 whitespace-pre-wrap">
+                                <span className={`${isCompactView ? 'line-clamp-3' : 'line-clamp-2'} whitespace-pre-wrap`}>
                                     {(editingTarget as Song)?.note || t.no_note_placeholder}
                                 </span>
                             </div>

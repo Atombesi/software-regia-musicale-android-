@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Song, AppMode, Language } from '../types';
-import { Music2, PlayCircle, PauseCircle, Upload, Disc, Check, Edit3, MonitorPlay, RotateCcw, Save, Scissors, Wind, SignalHigh, GripVertical, Plus, AlertTriangle, Activity, Trash2, FileSignature, Info, Link2, ChevronUp, ChevronDown, StickyNote } from 'lucide-react';
+import { Music2, PlayCircle, PauseCircle, Upload, Disc, Check, Edit3, MonitorPlay, RotateCcw, Save, Scissors, Wind, SignalHigh, GripVertical, Plus, AlertTriangle, Activity, Trash2, FileSignature, Info, Link2, ChevronUp, ChevronDown, StickyNote, Minimize2, Maximize2 } from 'lucide-react';
 import { translations } from '../translations';
 
 interface PlaylistViewProps {
@@ -27,6 +27,8 @@ interface PlaylistViewProps {
   language?: Language;
   onLanguageRequest?: () => void; // NEW PROP to trigger language selector
   playlistFileName?: string; // NEW PROP for displaying filename
+  isCompactView?: boolean; // NEW PROP for Compact Mode State
+  onToggleCompactView?: () => void; // NEW PROP for Compact Mode Toggle
 }
 
 // --- HELPER: Format Duration (MM:SS) ---
@@ -132,7 +134,9 @@ const PlaylistView: React.FC<PlaylistViewProps> = ({
   onRelink,
   language = 'it',
   onLanguageRequest,
-  playlistFileName
+  playlistFileName,
+  isCompactView = false,
+  onToggleCompactView
 }) => {
   const activeRef = useRef<HTMLButtonElement>(null);
   const t = translations[language];
@@ -229,20 +233,26 @@ const PlaylistView: React.FC<PlaylistViewProps> = ({
                     </button>
                  )}
 
-                 {/* INFO BUTTON */}
-                 <button
-                    onClick={onOpenInfo}
-                    className="p-1.5 rounded-full transition-colors border bg-slate-800 border-slate-600 text-slate-500 hover:text-white hover:border-slate-400"
-                    title={t.info_credits}
-                 >
-                     <Info className="w-4 h-4" />
-                 </button>
-                 
-                 {/* FLAG ICON - LIVE MODE POSITION (Next to Info) */}
-                 {appMode === 'presentation' && onLanguageRequest && (
-                    <div className="p-1.5 flex items-center justify-center">
-                        <FlagIcon lang={language} onClick={onLanguageRequest} />
-                    </div>
+                 {/* INFO BUTTON (EDITING ONLY) */}
+                 {appMode === 'editing' && (
+                    <button
+                        onClick={onOpenInfo}
+                        className="p-1.5 rounded-full transition-colors border bg-slate-800 border-slate-600 text-slate-500 hover:text-white hover:border-slate-400"
+                        title={t.info_credits}
+                    >
+                        <Info className="w-4 h-4" />
+                    </button>
+                 )}
+
+                 {/* COMPACT MODE BUTTON (LIVE ONLY) */}
+                 {appMode === 'presentation' && onToggleCompactView && (
+                    <button
+                        onClick={onToggleCompactView}
+                        className={`p-1.5 rounded-full transition-colors border ${isCompactView ? 'bg-indigo-500 text-white border-indigo-400' : 'bg-slate-800 border-slate-600 text-slate-500 hover:text-white hover:border-slate-400'}`}
+                        title={isCompactView ? "Expand View" : "Compact View"}
+                    >
+                        {isCompactView ? <Maximize2 className="w-4 h-4" /> : <Minimize2 className="w-4 h-4" />}
+                    </button>
                  )}
              </div>
 
@@ -291,15 +301,9 @@ const PlaylistView: React.FC<PlaylistViewProps> = ({
                 )}
             </h2>
 
-            {appMode === 'editing' && (
-                <div className="flex gap-2 items-center">
-                    {/* FLAG ICON - EDITING MODE POSITION (Before Load) */}
-                    {onLanguageRequest && (
-                        <div className="mr-2">
-                             <FlagIcon lang={language} onClick={onLanguageRequest} />
-                        </div>
-                    )}
-
+            <div className="flex gap-2 items-center">
+                {/* LOAD BUTTON - EDITING ONLY */}
+                {appMode === 'editing' && (
                     <button
                         onClick={onLoadNew}
                         className="flex items-center gap-2 px-3 py-1.5 bg-slate-800 hover:bg-indigo-600 text-xs font-bold uppercase tracking-wider rounded-lg transition-colors text-slate-300 hover:text-white border border-slate-700 hover:border-indigo-500 shadow-sm"
@@ -308,8 +312,15 @@ const PlaylistView: React.FC<PlaylistViewProps> = ({
                         <Upload className="w-4 h-4" />
                         {t.load_btn}
                     </button>
-                </div>
-            )}
+                )}
+
+                {/* FLAG ICON - ALWAYS HERE (AFTER LOAD) */}
+                {onLanguageRequest && (
+                    <div className="ml-1">
+                            <FlagIcon lang={language} onClick={onLanguageRequest} />
+                    </div>
+                )}
+            </div>
         </div>
       </div>
       
@@ -317,7 +328,8 @@ const PlaylistView: React.FC<PlaylistViewProps> = ({
       <div className="flex-1 overflow-y-auto touch-pan-y overscroll-contain p-4 space-y-2 pb-4">
         {songs.map((song, index) => {
           // CHECK IF FILE IS MISSING (url is effectively a filename, not a blob/http)
-          const isMissing = !song.url.startsWith('blob:') && !song.url.startsWith('http');
+          // FIX: Added 'file:' protocol check for Electron
+          const isMissing = !song.url.startsWith('blob:') && !song.url.startsWith('http') && !song.url.startsWith('file:');
           
           const isActive = index === currentIndex;
           // Logic for 'Played' in live mode: Any track before the current index
@@ -356,7 +368,7 @@ const PlaylistView: React.FC<PlaylistViewProps> = ({
               }`}>
                 
                 {isMissing ? (
-                    <Link2 className="w-5 h-5 animate-pulse" title={t.relink_tooltip_icon} />
+                    <Link2 className="w-5 h-5 animate-pulse" />
                 ) : isActive ? (
                    // Show Activity/Music Icon if active, but NOT a button
                    <Activity className={`w-5 h-5 ${isPlaying ? 'animate-pulse' : ''}`} />
