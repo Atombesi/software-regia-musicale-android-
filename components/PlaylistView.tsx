@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Song, AppMode, Language } from '../types';
-import { Music2, PlayCircle, PauseCircle, Upload, Disc, Check, Edit3, MonitorPlay, RotateCcw, Save, Scissors, Wind, SignalHigh, GripVertical, Plus, AlertTriangle, Activity, Trash2, FileSignature, Info, Link2, ChevronUp, ChevronDown, StickyNote, Minimize2, Maximize2 } from 'lucide-react';
+import { Music2, PlayCircle, PauseCircle, Upload, Disc, Check, Edit3, MonitorPlay, RotateCcw, Save, Scissors, Wind, SignalHigh, GripVertical, Plus, AlertTriangle, Activity, Trash2, FileSignature, Info, Link2, ChevronUp, ChevronDown, StickyNote, Minimize2, Maximize2, FilePenLine, FileText } from 'lucide-react';
 import { translations } from '../translations';
 
 interface PlaylistViewProps {
@@ -18,7 +18,7 @@ interface PlaylistViewProps {
   onRequestModeChange: () => void; // Changed from setAppMode
   playedSongIds: Set<string>;
   onRequestReset: () => void; // Changed from onResetPlayed
-  onExportPlaylist: () => void;
+  onSavePlaylist: () => void; // RIPRISTINATO NOME UNICO PER IL SALVATAGGIO
   showWaveform: boolean;
   onToggleWaveform: () => void;
   onOpenRawEditor: () => void;
@@ -29,6 +29,9 @@ interface PlaylistViewProps {
   playlistFileName?: string; // NEW PROP for displaying filename
   isCompactView?: boolean; // NEW PROP for Compact Mode State
   onToggleCompactView?: () => void; // NEW PROP for Compact Mode Toggle
+  appVersion?: string; // NEW PROP: App Version String
+  isAndroid?: boolean; // NEW PROP: Platform check
+  onOpenLog?: () => void; // NEW PROP: Open Log Viewer
 }
 
 // --- HELPER: Format Duration (MM:SS) ---
@@ -126,7 +129,7 @@ const PlaylistView: React.FC<PlaylistViewProps> = ({
   onRequestModeChange,
   playedSongIds,
   onRequestReset,
-  onExportPlaylist,
+  onSavePlaylist, 
   showWaveform,
   onToggleWaveform,
   onOpenRawEditor,
@@ -136,7 +139,10 @@ const PlaylistView: React.FC<PlaylistViewProps> = ({
   onLanguageRequest,
   playlistFileName,
   isCompactView = false,
-  onToggleCompactView
+  onToggleCompactView,
+  appVersion,
+  isAndroid = false,
+  onOpenLog 
 }) => {
   const activeRef = useRef<HTMLButtonElement>(null);
   const t = translations[language];
@@ -254,6 +260,13 @@ const PlaylistView: React.FC<PlaylistViewProps> = ({
                         {isCompactView ? <Maximize2 className="w-4 h-4" /> : <Minimize2 className="w-4 h-4" />}
                     </button>
                  )}
+
+                 {/* Version - Windows Only (MOVED HERE) */}
+                 {!isAndroid && appVersion && (
+                     <div className="text-[9px] font-bold text-slate-600 select-none shrink-0 ml-2 border border-slate-700/50 px-1.5 py-0.5 rounded">
+                         {appVersion}
+                     </div>
+                 )}
              </div>
 
              <div className="flex gap-2">
@@ -269,24 +282,40 @@ const PlaylistView: React.FC<PlaylistViewProps> = ({
                 )}
 
                  {appMode === 'editing' && songs.length > 0 && (
-                    <button 
-                        onClick={onExportPlaylist}
-                        className="flex items-center gap-0.5 px-2 py-1.5 text-xs font-bold uppercase text-emerald-400 hover:text-white bg-slate-800 hover:bg-emerald-600 rounded-lg transition-colors border border-slate-700 hover:border-emerald-500 shadow-lg shadow-black/50"
-                        title={t.save_playlist}
-                    >
-                        <Save className="w-3.5 h-3.5" />
-                        {t.save_playlist}
-                    </button>
+                    <>
+                         {/* LOG VIEWER BUTTON - ONLY IF AVAILABLE */}
+                         {onOpenLog && (
+                             <button
+                                 onClick={onOpenLog}
+                                 className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-bold uppercase text-indigo-300 hover:text-white bg-slate-800 hover:bg-indigo-600 rounded-lg transition-colors border border-slate-700 hover:border-indigo-500 shadow-md"
+                                 title="Visualizza Log Spettacolo"
+                             >
+                                 <FileText className="w-4 h-4" />
+                             </button>
+                         )}
+
+                        {/* SINGLE SAVE BUTTON */}
+                        <button 
+                            onClick={onSavePlaylist}
+                            className="flex items-center gap-1 px-3 py-1.5 text-xs font-bold uppercase text-emerald-400 hover:text-white bg-slate-800 hover:bg-emerald-600 rounded-lg transition-colors border border-slate-700 hover:border-emerald-500 shadow-lg"
+                            title={t.save_playlist}
+                        >
+                            <Save className="w-4 h-4" />
+                            {t.save_playlist}
+                        </button>
+                    </>
                  )}
              </div>
         </div>
 
         {/* MIDDLE ROW: Playlist Filename Display */}
-        {playlistFileName && (
-            <div className="px-1 text-[10px] font-mono text-slate-500 truncate select-all" title={playlistFileName}>
-                {playlistFileName}
-            </div>
-        )}
+        <div className="flex items-center justify-between px-1">
+            {playlistFileName ? (
+                <div className="text-[10px] font-mono text-slate-500 truncate select-all" title={playlistFileName}>
+                    {playlistFileName}
+                </div>
+            ) : <div />}
+        </div>
 
         {/* Bottom Row: Loaders (Only Visible in Editing Mode) */}
         <div className="flex items-center justify-between min-h-[32px]">

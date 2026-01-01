@@ -37,3 +37,28 @@ export interface PlayerState {
 export type AppMode = 'editing' | 'presentation';
 
 export type Language = 'it' | 'en';
+
+// Estensione globale per Electron API
+declare global {
+  interface Window {
+    electronAPI?: {
+      saveDialog: (defaultName: string) => Promise<string | null>;
+      selectFolder: () => Promise<string | null>; // NEW: Select Folder Dialog
+      readFile: (path: string) => Promise<string>;
+      writeFile: (path: string, content: string) => Promise<boolean>;
+      copyFile: (src: string, dest: string) => Promise<boolean>; // NEW: Copy File
+      createDir: (path: string) => Promise<boolean>; // NEW: Create Directory
+      exists: (path: string) => Promise<boolean>;
+      
+      // SERVER API (V2.0)
+      server: {
+        start: (pin?: string) => Promise<{ ips: {name: string, address: string}[]; port: number } | null>;
+        stop: () => Promise<boolean>;
+        getIP: () => Promise<{name: string, address: string}[]>;
+        send: (data: any) => Promise<void>;
+        onClientMessage: (callback: (data: any) => void) => void;
+        onClientStatus: (callback: (count: number) => void) => void;
+      };
+    };
+  }
+}

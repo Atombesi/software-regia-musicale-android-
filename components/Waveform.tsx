@@ -18,9 +18,9 @@ interface WaveformProps {
   onRegionChange: (start: number, end: number) => void;
   onCursorMove: (time: number) => void; 
   seekRequest: number | null;
-  syncTime: number | null; // New prop for external sync (Live Mode)
+  syncTime: number | null; // Used for Master/Slave sync AND Standalone playback sync
   language?: Language;
-  hasFadeOut?: boolean; // New prop for color logic
+  hasFadeOut?: boolean; 
 }
 
 const Waveform: React.FC<WaveformProps> = ({ 
@@ -48,14 +48,11 @@ const Waveform: React.FC<WaveformProps> = ({
   const [zoomLevel, setZoomLevel] = useState(50); 
   const [duration, setDuration] = useState(0);
   const [displayTime, setDisplayTime] = useState("0:00.00");
-  const [timeColor, setTimeColor] = useState('text-white'); // New state for time color
+  const [timeColor, setTimeColor] = useState('text-white'); 
   const t = translations[language];
 
-  // --- REFS FOR EVENT LISTENERS ---
-  // Create a ref for trimEnd to access the latest value inside event listeners (closure fix)
   const trimEndRef = useRef(trimEnd);
   
-  // Sync the Ref whenever the prop changes
   useEffect(() => {
       trimEndRef.current = trimEnd;
   }, [trimEnd]);
@@ -86,18 +83,14 @@ const Waveform: React.FC<WaveformProps> = ({
 
   // Helper to determine color based on remaining time
   const updateTimeColor = (currentTime: number, playing: boolean) => {
+      // Use duration from wavesurfer OR the latest known duration
       const d = wavesurfer.current?.getDuration() || duration;
-      // IMPORTANT: Use trimEndRef.current to get the latest prop value inside the callback
       const currentTrimEnd = trimEndRef.current;
       const end = (currentTrimEnd && currentTrimEnd > 0) ? currentTrimEnd : d;
       const remaining = end - currentTime;
 
-      // Logic:
-      // 1. Red (SOLID) if remaining <= 5s
-      // 2. Orange if remaining <= 10s
-      // 3. Default (Emerald if playing, White if paused)
-      if (remaining <= 5) { // Threshold changed to 5s
-          setTimeColor('text-red-500 font-bold'); // Removed animate-pulse, added font-bold
+      if (remaining <= 5) { 
+          setTimeColor('text-red-500 font-bold'); 
       } else if (remaining <= 10) {
           setTimeColor('text-amber-500');
       } else {
@@ -105,13 +98,17 @@ const Waveform: React.FC<WaveformProps> = ({
       }
   };
 
-  // Re-evaluate color when dependencies change (e.g. playing state toggles)
+  // --- MAIN TIME UPDATE EFFECT ---
   useEffect(() => {
-      if (wavesurfer.current) {
-          const t = wavesurfer.current.getCurrentTime();
-          updateTimeColor(t, isPlaying);
+      // CRITICAL FIX: Always prefer syncTime if available (HTML5 Player Active), otherwise fallback to WaveSurfer internal time
+      const t = syncTime !== null ? syncTime : (wavesurfer.current?.getCurrentTime() || 0);
+      updateTimeColor(t, isPlaying);
+      
+      // Update display text if syncing externally
+      if (syncTime !== null) {
+          setDisplayTime(formatTime(syncTime));
       }
-  }, [isPlaying, hasFadeOut, trimEnd, duration]);
+  }, [isPlaying, hasFadeOut, trimEnd, duration, syncTime]);
 
   // Initialize WaveSurfer
   useEffect(() => {
@@ -129,7 +126,7 @@ const Waveform: React.FC<WaveformProps> = ({
       barWidth: 3,
       barGap: 3,
       barRadius: 3,
-      height: containerRef.current.clientHeight || 150, // Force initial height to match container
+      height: containerRef.current.clientHeight || 150, 
       normalize: true,
       minPxPerSec: zoomLevel,
       hideScrollbar: false,
@@ -149,9 +146,12 @@ const Waveform: React.FC<WaveformProps> = ({
     });
 
     wavesurfer.current.on('audioprocess', (currentTime) => {
-      setDisplayTime(formatTime(currentTime));
-      if (onTimeUpdateRef.current) onTimeUpdateRef.current(currentTime);
-      updateTimeColor(currentTime, true); // Assume playing during audioprocess
+      // Only update from internal process if NOT syncing externally
+      if (syncTime === null) {
+          setDisplayTime(formatTime(currentTime));
+          if (onTimeUpdateRef.current) onTimeUpdateRef.current(currentTime);
+          updateTimeColor(currentTime, true);
+      }
     });
 
     wavesurfer.current.on('interaction', (newTime) => {
@@ -160,7 +160,9 @@ const Waveform: React.FC<WaveformProps> = ({
     });
 
     wavesurfer.current.on('seeking', (currentTime) => {
-      setDisplayTime(formatTime(currentTime));
+      if (syncTime === null) {
+          setDisplayTime(formatTime(currentTime));
+      }
       if (onTimeUpdateRef.current) onTimeUpdateRef.current(currentTime);
       updateTimeColor(currentTime, isPlaying);
     });
@@ -185,17 +187,16 @@ const Waveform: React.FC<WaveformProps> = ({
     };
   }, []); 
 
-  // Handle Zoom Change
+  // Handle Zoom
   useEffect(() => {
       if (wavesurfer.current && isReady) {
           wavesurfer.current.zoom(Math.max(10, zoomLevel));
       }
   }, [zoomLevel, isReady]);
 
-  // Handle Height/Mode Change (Editing vs Live)
+  // Handle Height/Mode Change
   useEffect(() => {
       if (wavesurfer.current && containerRef.current) {
-          // Add small delay to wait for CSS transition
           const timeout = setTimeout(() => {
               if (containerRef.current && wavesurfer.current) {
                   // @ts-ignore
@@ -210,7 +211,7 @@ const Waveform: React.FC<WaveformProps> = ({
   useEffect(() => {
     if (wavesurfer.current && url) {
       setIsReady(false);
-      setZoomLevel(isEditing ? 50 : 10); // Safe default for Live
+      setZoomLevel(isEditing ? 50 : 10); 
       wavesurfer.current.load(url);
     }
   }, [url, isEditing]);
@@ -225,7 +226,7 @@ const Waveform: React.FC<WaveformProps> = ({
           
           if (regionDuration > 0 && containerWidth > 0) {
               const fitZoom = containerWidth / regionDuration;
-              setZoomLevel(Math.max(10, fitZoom)); // Safe fit
+              setZoomLevel(Math.max(10, fitZoom)); 
           }
       }
   }, [isEditing, isReady, trimStart, trimEnd, duration]);
@@ -257,8 +258,8 @@ const Waveform: React.FC<WaveformProps> = ({
           start: start,
           end: end,
           color: 'rgba(16, 185, 129, 0.2)', 
-          drag: false, // DISABLED DRAG
-          resize: false, // DISABLED RESIZE
+          drag: false, 
+          resize: false, 
           minLength: 0.1,
       });
   };
@@ -267,7 +268,6 @@ const Waveform: React.FC<WaveformProps> = ({
   useEffect(() => {
     if (!wavesurfer.current || !isReady) return;
     
-    // IF EDITING: Waveform is the Master
     if (isEditing) {
         if (isPlaying) {
             wavesurfer.current.play().catch(e => console.error("Waveform play error", e));
@@ -275,30 +275,23 @@ const Waveform: React.FC<WaveformProps> = ({
             wavesurfer.current.pause();
         }
     } 
-    // IF LIVE: Waveform is Viewer only (Muted, no play calls)
     else {
-        wavesurfer.current.setVolume(0); // Ensure muted
-        wavesurfer.current.pause(); // Ensure paused
+        // IN LIVE MODE: WaveSurfer is visualization only, mute it and let syncTime drive cursor
+        wavesurfer.current.setVolume(0); 
+        wavesurfer.current.pause(); 
     }
   }, [isPlaying, isReady, isEditing]);
 
-  // --- SYNC EXTERNAL TIME (LIVE MODE) ---
+  // --- SYNC EXTERNAL TIME (CRITICAL FOR LIVE MODE) ---
   useEffect(() => {
-      if (!isEditing && isReady && wavesurfer.current && syncTime !== null) {
+      if (syncTime !== null && wavesurfer.current && isReady) {
           const d = wavesurfer.current.getDuration();
           if (d > 0) {
-              // Convert seconds to progress (0-1) for seekTo if we want smooth jump, 
-              // or setTime if available (wavesurfer v7 has setTime)
               const progress = Math.min(Math.max(0, syncTime / d), 1);
-              // Avoid jitter by checking delta? 
-              // wavesurfer.current.setTime(syncTime); // v7 method
-              // If setTime isn't behaving, seekTo works with 0-1
-               wavesurfer.current.seekTo(progress);
-               setDisplayTime(formatTime(syncTime));
-               updateTimeColor(syncTime, isPlaying); // Update color on sync
+              wavesurfer.current.seekTo(progress);
           }
       }
-  }, [syncTime, isReady, isEditing]);
+  }, [syncTime, isReady]);
 
   // --- EDITING VOLUME ---
   useEffect(() => {
@@ -354,11 +347,9 @@ const Waveform: React.FC<WaveformProps> = ({
           );
           
           const delta = dist - lastTouchDistance;
-          // Sensitivity factor
           const sensitivity = 0.5;
           
           if (Math.abs(delta) > 5) {
-               // Limit zoom min to 10
                setZoomLevel(prev => Math.max(10, Math.min(500, prev + (delta * sensitivity))));
                setLastTouchDistance(dist);
           }
@@ -369,11 +360,12 @@ const Waveform: React.FC<WaveformProps> = ({
       setLastTouchDistance(null);
   };
 
+  const showTimeOverlay = isReady || syncTime !== null;
+
   return (
     <div className="w-full h-full flex flex-col relative group select-none overflow-hidden">
       
-      {/* TIME DISPLAY OVERLAY */}
-      {isReady && (
+      {showTimeOverlay && (
           <div className="absolute top-2 left-1/2 -translate-x-1/2 z-30 bg-black/60 backdrop-blur-md px-3 py-1 rounded-full border border-white/20 shadow-lg pointer-events-none">
               <span className={`font-mono font-bold text-lg tracking-wider ${timeColor}`}>
                   {displayTime}
@@ -381,7 +373,6 @@ const Waveform: React.FC<WaveformProps> = ({
           </div>
       )}
 
-      {/* WAVEFORM CONTAINER */}
       <div 
         className="relative w-full h-full touch-none"
         onTouchStart={handleTouchStart}
@@ -395,8 +386,7 @@ const Waveform: React.FC<WaveformProps> = ({
          />
       </div>
       
-      {/* Loading Overlay */}
-      {!isReady && (
+      {!isReady && !syncTime && (
         <div className="absolute inset-0 flex items-center justify-center z-10 pointer-events-none">
             <div className="text-center text-xs text-emerald-400 mt-2 animate-pulse font-mono bg-slate-900/80 px-3 py-1 rounded-full border border-emerald-500/30">
             {t.waveform_loading}
@@ -404,18 +394,16 @@ const Waveform: React.FC<WaveformProps> = ({
         </div>
       )}
 
-      {/* CSS Injection for Dynamic Marker Borders (Lines) */}
       <style>{`
         .wavesurfer-region {
             z-index: 4 !important;
             border-left: 2px solid #10b981 !important; 
             border-right: 2px solid #ef4444 !important; 
-            pointer-events: none !important; /* Force disable interactions */
+            pointer-events: none !important; 
         }
         .wavesurfer-region-handle { display: none !important; }
       `}</style>
 
-      {/* Zoom Controls Overlay */}
       {isReady && (
           <div className="absolute bottom-2 right-2 z-20 flex items-center gap-2 bg-slate-900/90 p-1.5 rounded-lg border border-slate-700 shadow-xl opacity-0 group-hover:opacity-100 transition-opacity">
               <button 
@@ -424,9 +412,7 @@ const Waveform: React.FC<WaveformProps> = ({
               >
                   <ZoomOut className="w-3 h-3" />
               </button>
-              
               <span className="text-[9px] font-mono text-slate-500 min-w-[3ch] text-center">{Math.round(zoomLevel)}</span>
-              
               <button 
                 onClick={() => setZoomLevel(prev => Math.min(200, prev + 5))}
                 className="p-1 text-slate-400 hover:text-white transition-colors active:scale-95"

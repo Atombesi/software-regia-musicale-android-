@@ -1,3 +1,5 @@
+
+
 export type Language = 'it' | 'en';
 
 export const translations = {
@@ -18,17 +20,21 @@ export const translations = {
     error_permission: "Permesso di archiviazione negato",
     android_permission_hint_title: "Non vedi i file Playlist (.txt)?",
     android_permission_hint_text: "Android nasconde i file di testo per sicurezza. Devi abilitare manualmente 'Gestione di tutti i file' nelle Impostazioni del Tablet > App > Regia Musiche > Permessi (o Accesso Speciale).",
+    recent_playlists: "Ultime Playlist",
+    recent_empty: "Nessuna playlist recente",
+    file_not_found_history: "File non trovato.", 
     
     // 2. Playlist & Modes
     mode_editing: "Editing",
     mode_live: "Live",
     tracks: "Tracce",
-    played_counter: "Eseguite", // + X su Y logic in component
+    played_counter: "Eseguite", 
     reset_show: "Reset Show",
     reset_tooltip: "Reset playlist all'inizio",
     save_playlist: "Salva Playlist",
-    load_new: "Carica nuova playlist", // Tooltip
-    load_btn: "Load", // Short button
+    export_project: "Esporta Progetto",
+    load_new: "Carica nuova playlist", 
+    load_btn: "Load", 
     add_track: "Aggiungi Traccia",
     missing_file: "File mancante",
     played_status: "Eseguito",
@@ -44,7 +50,7 @@ export const translations = {
     mark_out: "Mark Out",
     volume: "Volume",
     fade_btn: "FADE",
-    director_note: "Nota di Regia", // Modal Title
+    director_note: "Nota di Regia", 
     edit_note_tooltip: "Modifica Nota Regia",
     no_note_placeholder: "Nessuna nota per questo brano.",
     sfx_section: "Effetti Sonori (SFX)",
@@ -62,12 +68,13 @@ export const translations = {
     no_track_title: "Nessun brano",
 
     // 5. Modals & Messages
-    btn_confirm: "Conferma",
+    btn_confirm: "Confermi",
     btn_cancel: "Annulla",
     btn_close: "Chiudi",
     btn_save: "Salva",
     btn_apply: "Applica",
     btn_ok: "OK",
+    btn_remove: "Rimuovi",
     
     saved_title: "Salvato!",
     file_updated: "File aggiornato",
@@ -88,6 +95,68 @@ export const translations = {
     
     reset_show_msg: "Sei sicuro di voler resettare lo spettacolo e tornare all'inizio?",
     
+    // NEW HISTORY TRANSLATIONS
+    history_remove_title: "ERRORE CARICAMENTO",
+    history_remove_msg: "Impossibile trovare il file. Vuoi rimuoverlo dallo storico?",
+    history_user_remove_title: "Rimuovi da Storico",
+    history_user_remove_msg: "Vuoi rimuovere questa voce dall'elenco delle recenti? Il file fisico NON verrà eliminato.",
+    history_debug_path: "Percorso cercato:",
+    history_debug_config: "File Configurazione:",
+    config_save_error_title: "Errore Configurazione",
+    config_save_error_msg: "Impossibile salvare il file di configurazione automaticamente. Scegli dove salvarlo.",
+
+    // NETWORK TRANSLATIONS (V2.0 & 2.4)
+    network_title: "Connessione Remota",
+    role_server: "Regia (Master)",
+    role_client: "Tablet (Remote)",
+    server_ip_label: "Indirizzo IP Regia",
+    client_ip_label: "Inserisci IP Regia",
+    client_pin_label: "PIN Regia (Opzionale)",
+    btn_connect: "Connetti",
+    btn_disconnect: "Disconnetti",
+    status_connected: "Connesso",
+    status_disconnected: "Disconnesso",
+    status_connecting: "Connessione in corso...",
+    server_start: "Avvia Server",
+    server_stop: "Ferma Server",
+    clients_connected: "Client connessi",
+    sync_success: "Playlist Sincronizzata!",
+    sync_error: "Errore Sincronizzazione",
+    error_wrong_pin: "PIN Errato! Connessione rifiutata.",
+    
+    // DOWNLOAD TRANSLATIONS
+    btn_download_media: "Scarica Media Playlist",
+    download_progress: "Scaricamento in corso...",
+    download_complete: "Download Completato!",
+    download_error: "Errore Download",
+    download_info: "I file verranno salvati nella memoria interna per permettere la visualizzazione della Waveform.",
+    
+    // EXPORT
+    export_title: "Esporta Progetto",
+    export_msg_start: "Verrà creata una copia della playlist e di tutti i file audio in una cartella unica. Scegli la cartella di destinazione.",
+    export_progress: "Esportazione in corso...",
+    export_success_title: "Esportazione Completata",
+    export_success_msg: "Tutti i file sono stati copiati correttamente.",
+    export_error_title: "Errore Esportazione",
+    export_select_folder: "Seleziona Cartella di Destinazione",
+
+    // SETTINGS & CHAT
+    settings_title: "Impostazioni",
+    tab_language: "Lingua",
+    tab_options: "Opzioni",
+    opt_network_mode: "Abilita Client/Server",
+    opt_call_beep: "Suono Chiamata",
+    opt_call_timeout: "Timeout Chiamata (sec)",
+    opt_server_pin: "PIN Server (Sicurezza)",
+    opt_device_name: "Nome Questo Dispositivo",
+    
+    chat_title: "Chat Regia",
+    chat_placeholder: "Scrivi un messaggio...",
+    call_calling: "Chiamata in corso...",
+    call_incoming: "CHIAMATA IN ARRIVO",
+    call_end: "Termina",
+    call_answer: "Rispondi",
+
     license_title: "Licenza d'uso e Disclaimer",
     
     // Info Text (HTML/JSX Content mapped to strings)
@@ -105,7 +174,8 @@ export const translations = {
     credits_libs: "Regia Musiche Attozero utilizza librerie Open Source:",
     
     // Language Modal
-    select_language: "Seleziona Lingua / Select Language"
+    select_language: "Seleziona Lingua / Select Language",
+    app_name: "Regia Musiche Attozero"
   },
   en: {
     // 1. File Loader
@@ -124,6 +194,9 @@ export const translations = {
     error_permission: "Storage permission denied",
     android_permission_hint_title: "Can't see Playlist (.txt) files?",
     android_permission_hint_text: "Android hides text files for security. You must manually enable 'All Files Access' in Tablet Settings -> Apps -> Regia Musiche -> Permissions (or Special Access).",
+    recent_playlists: "Recent Playlists",
+    recent_empty: "No recent playlists",
+    file_not_found_history: "File not found.",
     
     // 2. Playlist & Modes
     mode_editing: "Editing",
@@ -133,8 +206,9 @@ export const translations = {
     reset_show: "Reset Show",
     reset_tooltip: "Reset playlist to start",
     save_playlist: "Save Playlist",
+    export_project: "Export Project",
     load_new: "Load New",
-    load_btn: "Load",
+    load_btn: "Load", 
     add_track: "Add Track",
     missing_file: "Missing file",
     played_status: "Played",
@@ -174,6 +248,7 @@ export const translations = {
     btn_save: "Save",
     btn_apply: "Apply",
     btn_ok: "OK",
+    btn_remove: "Remove",
     
     saved_title: "Saved!",
     file_updated: "File updated",
@@ -194,6 +269,68 @@ export const translations = {
     
     reset_show_msg: "Are you sure you want to reset the show and go back to the start?",
     
+    // NEW HISTORY TRANSLATIONS
+    history_remove_title: "LOAD ERROR",
+    history_remove_msg: "Cannot find the file. Do you want to remove it from history?",
+    history_user_remove_title: "Remove from History",
+    history_user_remove_msg: "Do you want to remove this item from the recent list? The physical file will NOT be deleted.",
+    history_debug_path: "Searched Path:",
+    history_debug_config: "Config File:",
+    config_save_error_title: "Configuration Error",
+    config_save_error_msg: "Unable to save configuration file (settings.json) automatically. Please choose where to save it.",
+
+    // NETWORK TRANSLATIONS (V2.0 & 2.4)
+    network_title: "Remote Connection",
+    role_server: "Director (Master)",
+    role_client: "Tablet (Remote)",
+    server_ip_label: "Director IP Address",
+    client_ip_label: "Enter Director IP",
+    client_pin_label: "Director PIN (Optional)",
+    btn_connect: "Connect",
+    btn_disconnect: "Disconnect",
+    status_connected: "Connected",
+    status_disconnected: "Disconnected",
+    status_connecting: "Connecting...",
+    server_start: "Start Server",
+    server_stop: "Stop Server",
+    clients_connected: "Connected Clients",
+    sync_success: "Playlist Synced!",
+    sync_error: "Sync Error",
+    error_wrong_pin: "Wrong PIN! Connection refused.",
+    
+    // DOWNLOAD TRANSLATIONS
+    btn_download_media: "Download Playlist Media",
+    download_progress: "Downloading...",
+    download_complete: "Download Complete!",
+    download_error: "Download Error",
+    download_info: "Files will be saved to internal storage to enable Waveform visualization.",
+
+    // EXPORT
+    export_title: "Export Project",
+    export_msg_start: "A copy of the playlist and all audio files will be created in a single folder. Choose the destination folder.",
+    export_progress: "Exporting...",
+    export_success_title: "Export Complete",
+    export_success_msg: "All files have been copied successfully.",
+    export_error_title: "Export Error",
+    export_select_folder: "Select Destination Folder",
+
+    // SETTINGS & CHAT
+    settings_title: "Settings",
+    tab_language: "Language",
+    tab_options: "Options",
+    opt_network_mode: "Enable Client/Server",
+    opt_call_beep: "Call Sound",
+    opt_call_timeout: "Call Timeout (sec)",
+    opt_server_pin: "Server PIN (Security)",
+    opt_device_name: "This Device Name",
+    
+    chat_title: "Director Chat",
+    chat_placeholder: "Type a message...",
+    call_calling: "Calling...",
+    call_incoming: "INCOMING CALL",
+    call_end: "End Call",
+    call_answer: "Answer",
+
     license_title: "License & Disclaimer",
     
     // Info Text
@@ -211,6 +348,7 @@ export const translations = {
     credits_libs: "Regia Musiche Attozero uses Open Source libraries:",
     
     // Language Modal
-    select_language: "Seleziona Lingua / Select Language"
+    select_language: "Seleziona Lingua / Select Language",
+    app_name: "Regia Musiche Attozero"
   }
 };
