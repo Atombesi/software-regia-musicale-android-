@@ -57,7 +57,8 @@ declare global {
         getIP: () => Promise<{name: string, address: string}[]>;
         send: (data: any) => Promise<void>;
         onClientMessage: (callback: (data: any) => void) => void;
-        onClientStatus: (callback: (count: number) => void) => void;
+        onClientStatus: (callback: (clients: any[]) => void) => void;
+        kick: (clientId: string) => Promise<boolean>;
       };
     };
   }

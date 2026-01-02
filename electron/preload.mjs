@@ -19,6 +19,7 @@ try {
         stop: () => ipcRenderer.invoke('server:stop'),
         getIP: () => ipcRenderer.invoke('server:get-ip'),
         send: (data) => ipcRenderer.invoke('server:broadcast', data),
+        kick: (clientId) => ipcRenderer.invoke('server:kick', clientId),
         
         // Listeners (from Main to Renderer)
         // FIX: Remove listeners before adding new ones to prevent duplicates (double chat messages)

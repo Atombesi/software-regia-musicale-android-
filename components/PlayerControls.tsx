@@ -17,6 +17,7 @@ interface PlayerControlsProps {
   endTime: number;
   appMode?: AppMode; // Optional to keep backward compatibility if needed, but App provides it
   language: Language;
+  readOnly?: boolean; // NEW: Controls locked state
 }
 
 const formatTime = (time: number) => {
@@ -39,7 +40,8 @@ const PlayerControls: React.FC<PlayerControlsProps> = ({
   startTime,
   endTime,
   appMode = 'editing',
-  language
+  language,
+  readOnly = false
 }) => {
   // Safe defaults if props are missing/zero
   const minVal = startTime || 0;
@@ -57,13 +59,14 @@ const PlayerControls: React.FC<PlayerControlsProps> = ({
   const isLive = appMode === 'presentation';
 
   return (
-    <div className="h-full w-full flex items-center px-4 md:px-8 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.3)]">
+    <div className={`h-full w-full flex items-center px-4 md:px-8 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.3)] ${readOnly ? 'pointer-events-none grayscale opacity-50' : ''}`}>
       
       {/* STOP BUTTON (Leftmost) - REDUCED SIZE */}
       <div className="mr-4 shrink-0">
           <button
             onClick={onStop}
-            className="flex items-center justify-center text-white rounded-full p-3 shadow-lg bg-red-600 hover:bg-red-500 shadow-red-900/50 transition-all transform active:scale-95"
+            disabled={readOnly}
+            className="flex items-center justify-center text-white rounded-full p-3 shadow-lg bg-red-600 hover:bg-red-500 shadow-red-900/50 transition-all transform active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
             title={t.stop_reset_tooltip}
           >
               <Square className="w-5 h-5 fill-current" />
@@ -87,8 +90,8 @@ const PlayerControls: React.FC<PlayerControlsProps> = ({
         <div className="flex items-center gap-6">
           <button 
             onClick={onPrev}
-            disabled={isLive}
-            className={`text-slate-400 transition-colors p-2 rounded-full active:scale-95 ${isLive ? 'opacity-20 cursor-not-allowed' : 'hover:text-white hover:bg-slate-800'}`}
+            disabled={isLive || readOnly}
+            className={`text-slate-400 transition-colors p-2 rounded-full active:scale-95 ${isLive || readOnly ? 'opacity-20 cursor-not-allowed' : 'hover:text-white hover:bg-slate-800'}`}
           >
             <SkipBack className="w-8 h-8" />
           </button>
@@ -96,7 +99,8 @@ const PlayerControls: React.FC<PlayerControlsProps> = ({
           {/* PLAY BUTTON - NARROWER */}
           <button 
             onClick={onPlayPause}
-            className={`text-white rounded-full w-48 py-2.5 shadow-lg transition-all transform active:scale-95 flex items-center justify-between px-4 ${
+            disabled={readOnly}
+            className={`text-white rounded-full w-48 py-2.5 shadow-lg transition-all transform active:scale-95 flex items-center justify-between px-4 disabled:opacity-50 disabled:cursor-not-allowed ${
                 state.isPlaying 
                 ? 'bg-emerald-600 hover:bg-emerald-500 shadow-emerald-900/50' 
                 : 'bg-indigo-600 hover:bg-indigo-500 shadow-indigo-900/50'
@@ -122,7 +126,8 @@ const PlayerControls: React.FC<PlayerControlsProps> = ({
 
           <button 
             onClick={onNext}
-            className="text-slate-400 hover:text-white transition-colors p-2 rounded-full hover:bg-slate-800 active:scale-95"
+            disabled={readOnly}
+            className="text-slate-400 hover:text-white transition-colors p-2 rounded-full hover:bg-slate-800 active:scale-95 disabled:opacity-20"
           >
             <SkipForward className="w-8 h-8" />
           </button>
@@ -131,7 +136,7 @@ const PlayerControls: React.FC<PlayerControlsProps> = ({
         {/* Progress Bar */}
         <div className="w-full flex items-center gap-3 text-xs font-mono text-slate-400">
           <span>{formatTime(state.currentTime)}</span>
-          <div className="flex-1 h-1.5 bg-slate-700 rounded-full cursor-pointer group relative">
+          <div className={`flex-1 h-1.5 bg-slate-700 rounded-full cursor-pointer group relative ${readOnly ? 'pointer-events-none' : ''}`}>
              {/* Hit area for easier seeking */}
             <input 
               type="range"
@@ -139,7 +144,8 @@ const PlayerControls: React.FC<PlayerControlsProps> = ({
               max={maxVal}
               value={state.currentTime}
               onChange={(e) => onSeek(Number(e.target.value))}
-              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+              disabled={readOnly}
+              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10 disabled:cursor-not-allowed"
             />
             {/* Visual Bar uses calculated percentage relative to the cut */}
             <div 
@@ -160,7 +166,7 @@ const PlayerControls: React.FC<PlayerControlsProps> = ({
         {/* Fade Button */}
         <button 
             onClick={onFade}
-            disabled={!state.isPlaying}
+            disabled={!state.isPlaying || readOnly}
             className="flex flex-col items-center gap-1 group disabled:opacity-30 disabled:cursor-not-allowed shrink-0"
             title={t.fade_pause_tooltip}
         >
@@ -174,7 +180,7 @@ const PlayerControls: React.FC<PlayerControlsProps> = ({
 
         {/* Volume - More compact but usable */}
         <div className="flex items-center gap-2 flex-1 max-w-[120px]">
-            <button className="text-slate-400 shrink-0">
+            <button className="text-slate-400 shrink-0" disabled={readOnly}>
                 {state.volume === 0 ? <VolumeX className="w-5 h-5"/> : <Volume2 className="w-5 h-5" />}
             </button>
             <input 
@@ -184,7 +190,8 @@ const PlayerControls: React.FC<PlayerControlsProps> = ({
                 step="0.05"
                 value={state.volume}
                 onChange={(e) => onVolumeChange(Number(e.target.value))}
-                className="w-full h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:rounded-full"
+                disabled={readOnly}
+                className="w-full h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:rounded-full disabled:cursor-not-allowed"
             />
         </div>
       </div>

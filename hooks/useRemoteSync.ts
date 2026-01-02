@@ -5,16 +5,34 @@ import { isAndroidPlatform } from '../utils/platformUtils';
 export type SyncRole = 'master' | 'slave' | 'none';
 export type SyncStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
 
+export interface ConnectedClient {
+    id: string;
+    name: string;
+    ip: string;
+    locked?: boolean; // Local state tracking for Master UI
+}
+
 export interface RemoteSyncHook {
     role: SyncRole;
     status: SyncStatus;
     serverIPs: {name: string, address: string}[]; 
     connectedIP: string | null; 
+    
+    clients: ConnectedClient[]; // NEW: Full client list
     clientCount: number;
+    
+    // SLAVE STATE
+    myClientId: string | null;
+    isReadOnly: boolean;
+
     startServer: (pin?: string) => Promise<void>;
     stopServer: () => Promise<void>;
     connectToMaster: (ip: string, pin?: string, deviceName?: string) => void;
     disconnectFromMaster: () => void;
+    
+    kickClient: (clientId: string) => Promise<void>; // NEW
+    setClientPermission: (clientId: string, locked: boolean) => void; // NEW
+
     sendMasterCommand: (cmd: any) => void;
     broadcastState: (state: any) => void;
     sendPlaylist: (songs: Song[], sfx: SfxItem[], masterPath?: string) => void; 
@@ -31,8 +49,17 @@ export const useRemoteSync = (
     const [status, setStatus] = useState<SyncStatus>('disconnected');
     const [serverIPs, setServerIPs] = useState<{name: string, address: string}[]>([]);
     const [connectedIP, setConnectedIP] = useState<string | null>(null);
-    const [clientCount, setClientCount] = useState(0);
     
+    // MASTER STATE
+    const [clients, setClients] = useState<ConnectedClient[]>([]);
+
+    // SLAVE STATE
+    const [myClientId, setMyClientId] = useState<string | null>(null);
+    
+    // FIX: Default to FALSE (Full Permissions) so Standalone mode works.
+    // It only becomes TRUE when connecting as a Slave.
+    const [isReadOnly, setIsReadOnly] = useState(false);
+
     const wsRef = useRef<WebSocket | null>(null);
     const connectionTimeoutRef = useRef<any>(null);
     const heartbeatIntervalRef = useRef<any>(null);
@@ -59,6 +86,7 @@ export const useRemoteSync = (
                 setRole('master');
                 setStatus('connected');
                 setServerIPs(res.ips);
+                setIsReadOnly(false); // Master is always FULL CONTROL
                 
                 // Listener uses Ref to always get fresh logic
                 window.electronAPI.server.onClientMessage((data: any) => {
@@ -73,8 +101,23 @@ export const useRemoteSync = (
                     }
                 });
 
-                window.electronAPI.server.onClientStatus((count: number) => {
-                    setClientCount(count);
+                window.electronAPI.server.onClientStatus((clientList: any[]) => {
+                    // Merging logic to preserve 'locked' state if React has newer state,
+                    // BUT priority goes to the server list if it provides the locked state.
+                    setClients(prev => {
+                        return clientList.map(newItem => {
+                            // Check if server sent locked state (it should now)
+                            if (newItem.locked !== undefined) {
+                                return newItem;
+                            }
+                            // Fallback (shouldn't happen with new server logic)
+                            const existing = prev.find(p => p.id === newItem.id);
+                            return {
+                                ...newItem,
+                                locked: existing ? existing.locked : true // Default true for new clients
+                            };
+                        });
+                    });
                 });
             }
         } catch (e) {
@@ -89,8 +132,30 @@ export const useRemoteSync = (
         setRole('none');
         setStatus('disconnected');
         setServerIPs([]);
-        setClientCount(0);
+        setClients([]);
+        setIsReadOnly(false); // Ensure full control when server stops
     }, []);
+
+    const kickClient = useCallback(async (clientId: string) => {
+        if (role === 'master' && window.electronAPI?.server) {
+             await window.electronAPI.server.kick(clientId);
+        }
+    }, [role]);
+
+    const setClientPermission = useCallback((clientId: string, locked: boolean) => {
+        if (role === 'master' && window.electronAPI?.server) {
+            // 1. Broadcast command to all (client checks ID)
+            // Server also intercepts this to update its RAM state
+            window.electronAPI.server.send({ 
+                type: 'SET_PERMISSION', 
+                targetId: clientId, 
+                locked: locked 
+            });
+
+            // 2. Update local state immediately for UI responsiveness
+            setClients(prev => prev.map(c => c.id === clientId ? { ...c, locked } : c));
+        }
+    }, [role]);
 
     const broadcastState = useCallback((state: any) => {
         if (role === 'master' && window.electronAPI?.server) {
@@ -112,7 +177,6 @@ export const useRemoteSync = (
             window.electronAPI.server.send(msg);
         } else if (role === 'slave' && wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
             // Slave sends to Master (Name is injected in Handshake/or payload)
-            // Note: Slave name was sent in Handshake, Main process injects it into 'senderName' before passing to Renderer
             wsRef.current.send(JSON.stringify(msg));
         }
     }, [role]);
@@ -134,6 +198,8 @@ export const useRemoteSync = (
 
         try {
             setStatus('connecting');
+            // FIX: When connecting as slave, DEFAULT to Locked (Solo Chat) until verified.
+            setIsReadOnly(true); 
             
             const cleanIp = ip.trim();
             const wsUrl = `ws://${cleanIp}:8080`;
@@ -171,10 +237,18 @@ export const useRemoteSync = (
                     
                     // --- HANDSHAKE RESPONSE ---
                     if (data.type === 'HANDSHAKE_OK') {
-                        console.log("[Slave] Handshake Success");
+                        console.log("[Slave] Handshake Success. ID:", data.clientId);
                         setRole('slave');
                         setStatus('connected');
                         setConnectedIP(cleanIp);
+                        setMyClientId(data.clientId || null);
+                        
+                        // APPLY INITIAL PERMISSION FROM SERVER
+                        // Server defaults to True (Locked) for new clients, but sends it explicitly.
+                        if (data.locked !== undefined) {
+                            setIsReadOnly(data.locked);
+                            console.log(`[Slave] Initial Permission: ReadOnly = ${data.locked}`);
+                        }
                         
                         // Start Heartbeat only after auth
                         heartbeatIntervalRef.current = setInterval(() => {
@@ -192,7 +266,18 @@ export const useRemoteSync = (
                         ws.close();
                         setStatus('error'); // Will show red status
                         setRole('none');
+                        setIsReadOnly(false); // Revert to standalone mode
                         return;
+                    }
+
+                    // --- PERMISSION COMMAND ---
+                    if (data.type === 'SET_PERMISSION') {
+                        // Ensure we target this client
+                        if (data.targetId === myClientId || !myClientId) { // fallback if myClientId not set yet
+                             // Update local state based on command
+                             setIsReadOnly(data.locked);
+                             console.log(`[Slave] Permission Updated: ReadOnly = ${data.locked}`);
+                        }
                     }
 
                     // --- NORMAL MESSAGES ---
@@ -215,10 +300,6 @@ export const useRemoteSync = (
             ws.onerror = (e) => {
                 if (connectionTimeoutRef.current) clearTimeout(connectionTimeoutRef.current);
                 console.error("[Slave] WebSocket Error:", e);
-                // Don't alert if we just failed handshake (already alerted)
-                if (status !== 'error') {
-                   // Generic error
-                }
                 setStatus('error');
             };
 
@@ -229,6 +310,9 @@ export const useRemoteSync = (
                 setStatus('disconnected');
                 setRole('none');
                 setConnectedIP(null);
+                setMyClientId(null);
+                // FIX: Revert to Full Control when disconnected (Standalone Mode)
+                setIsReadOnly(false);
             };
 
             wsRef.current = ws;
@@ -237,8 +321,9 @@ export const useRemoteSync = (
             console.error("WS Init Error", e);
             if(isAndroidPlatform()) alert("Errore Inizializzazione: " + e.message);
             setStatus('error');
+            setIsReadOnly(false); // Revert on error
         }
-    }, [status]); 
+    }, [status, myClientId]); // dependency on myClientId ensures listener has correct ID
 
     const disconnectFromMaster = useCallback(() => {
         if (wsRef.current) {
@@ -249,6 +334,9 @@ export const useRemoteSync = (
         setRole('none');
         setStatus('disconnected');
         setConnectedIP(null);
+        setMyClientId(null);
+        // FIX: Revert to Full Control (Standalone Mode)
+        setIsReadOnly(false);
     }, []);
 
     const sendMasterCommand = useCallback((cmd: any) => {
@@ -274,14 +362,24 @@ export const useRemoteSync = (
         status,
         serverIPs,
         connectedIP,
-        clientCount,
+        
+        clients,
+        clientCount: clients.length,
+        
+        myClientId,
+        isReadOnly,
+
         startServer,
         stopServer,
         connectToMaster,
         disconnectFromMaster,
+        
+        kickClient,
+        setClientPermission,
+
         sendMasterCommand,
         broadcastState,
         sendPlaylist,
-        sendChatCommand // EXPORTED
+        sendChatCommand
     };
 };

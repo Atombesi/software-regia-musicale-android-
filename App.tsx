@@ -641,7 +641,11 @@ const App: React.FC = () => {
       remoteSync.sendChatCommand('CHAT_MSG', text);
   };
 
+  // --- READ ONLY CHECK ---
+  const isControlsDisabled = remoteSync.isReadOnly;
+
   const requestMainPlay = () => {
+      if (isControlsDisabled) return; // BLOCKED
       if (remoteSync.role === 'slave') {
           remoteSync.sendMasterCommand({ type: 'PLAY' });
           audioControls.updateState({ isPlaying: true });
@@ -651,6 +655,7 @@ const App: React.FC = () => {
   };
 
   const requestPause = () => {
+      if (isControlsDisabled) return; // BLOCKED
       if (remoteSync.role === 'slave') {
           remoteSync.sendMasterCommand({ type: 'PAUSE' });
           audioControls.updateState({ isPlaying: false });
@@ -660,6 +665,7 @@ const App: React.FC = () => {
   };
 
   const requestStop = () => {
+      if (isControlsDisabled) return; // BLOCKED
       if (remoteSync.role === 'slave') {
           remoteSync.sendMasterCommand({ type: 'STOP' });
           audioControls.updateState({ isPlaying: false, currentTime: 0 });
@@ -669,21 +675,25 @@ const App: React.FC = () => {
   };
 
   const requestNext = () => {
+      if (isControlsDisabled) return; // BLOCKED
       if (remoteSync.role === 'slave') remoteSync.sendMasterCommand({ type: 'NEXT' });
       else performNext();
   };
 
   const requestPrev = () => {
+      if (isControlsDisabled) return; // BLOCKED
       if (remoteSync.role === 'slave') remoteSync.sendMasterCommand({ type: 'PREV' });
       else performPrev();
   };
 
   const requestManualFade = () => {
+      if (isControlsDisabled) return; // BLOCKED
       if (remoteSync.role === 'slave') remoteSync.sendMasterCommand({ type: 'FADE' });
       else performManualFade('local');
   };
 
   const requestVolumeChange = (vol: number) => {
+      if (isControlsDisabled) return; // BLOCKED
       if (remoteSync.role === 'slave') {
           audioControls.setVolume(vol); 
           remoteSync.sendMasterCommand({ type: 'SET_VOLUME', value: vol });
@@ -693,6 +703,7 @@ const App: React.FC = () => {
   };
 
   const requestSfxPlay = (index: number) => {
+      if (isControlsDisabled) return; // BLOCKED
       if (appMode === 'editing') {
           const item = playlistState.sfxItems[index];
           if (!item || !item.url) {
@@ -708,6 +719,7 @@ const App: React.FC = () => {
   };
 
   const requestSongSelect = (idx: number) => {
+      if (isControlsDisabled) return; // BLOCKED
       if (remoteSync.role === 'slave') remoteSync.sendMasterCommand({ type: 'SELECT_SONG', index: idx });
       else {
           playlistActions.setCurrentIndex(idx); 
@@ -717,6 +729,7 @@ const App: React.FC = () => {
   };
 
   const requestReset = () => {
+      if (isControlsDisabled) return; // BLOCKED
       setConfirmModal({
           isOpen: true, 
           title: t.reset_show, 
@@ -739,16 +752,17 @@ const App: React.FC = () => {
   };
 
   const handleSeek = (time: number) => {
-      if (remoteSync.role === 'slave') return; 
+      if (remoteSync.role === 'slave') return; // Slave cannot seek freely except visually
       audioControls.seek(time);
       waveSeekRequestRef.current = time; 
       setTimeout(() => { waveSeekRequestRef.current = null; }, 100);
   };
 
   const requestPlayPauseAction = useCallback(() => {
+      if (isControlsDisabled) return;
       if (playerState.isPlaying && playbackSource === 'html5') requestPause();
       else requestMainPlay();
-  }, [playerState.isPlaying, playbackSource, requestPause, requestMainPlay]);
+  }, [playerState.isPlaying, playbackSource, requestPause, requestMainPlay, isControlsDisabled]);
 
   const requestPlayPauseRef = useRef(requestPlayPauseAction);
   useEffect(() => { requestPlayPauseRef.current = requestPlayPauseAction; }, [requestPlayPauseAction]);
@@ -1254,7 +1268,8 @@ const App: React.FC = () => {
   const isPinnedDesktop = chatPinned && !isAndroid;
 
   return (
-    <div className="h-screen w-screen bg-black flex overflow-hidden relative">
+    <div className={`h-screen w-screen bg-black flex overflow-hidden relative transition-all duration-500
+        ${isControlsDisabled ? 'ring-8 ring-inset ring-indigo-900/50 opacity-90' : ''}`}>
       <div className={`h-full w-full flex flex-col ${appMode === 'presentation' ? 'bg-black' : 'bg-slate-950'} transition-all duration-300`}>
           <input type="file" ref={windowsFileInputRef} onChange={handleWindowsFileSelect} className="hidden" accept="audio/*,.mp3,.wav,.ogg,.m4a" />
 
@@ -1313,6 +1328,7 @@ const App: React.FC = () => {
                     appVersion={APP_VERSION}
                     isAndroid={isAndroid}
                     onOpenLog={(!isAndroid && logFileExists && appMode === 'editing') ? handleOpenLogViewer : undefined}
+                    readOnly={isControlsDisabled} // Pass readonly prop
                 />
               </div>
 
@@ -1404,7 +1420,7 @@ const App: React.FC = () => {
                             </div>
                         )}
                         
-                        <div className="flex items-center justify-center gap-4 w-full">
+                        <div className={`flex items-center justify-center gap-4 w-full ${isControlsDisabled ? 'pointer-events-none' : ''}`}>
                             <div className="flex flex-col items-center gap-1">
                                 <span className="text-[9px] text-slate-500 font-bold uppercase">{t.time_start}</span>
                                 <div className="flex items-center gap-2">
@@ -1448,7 +1464,7 @@ const App: React.FC = () => {
                         {appMode === 'editing' && (
                             <>
                                 <div className="w-full h-px bg-slate-800/50" />
-                                <div className="flex items-center justify-center gap-4 w-full animate-in fade-in slide-in-from-top-2">
+                                <div className={`flex items-center justify-center gap-4 w-full animate-in fade-in slide-in-from-top-2 ${isControlsDisabled ? 'pointer-events-none' : ''}`}>
                                     <button
                                         onClick={() => (playerState.isPlaying && playbackSource === 'waveform' ? requestPause() : handleEditorPlay())}
                                         className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${playerState.isPlaying && playbackSource === 'waveform' ? 'bg-indigo-500/20 text-indigo-400 border border-indigo-500/50' : 'bg-slate-800 text-slate-300 border border-slate-600 hover:text-white hover:border-white'}`}
@@ -1497,7 +1513,7 @@ const App: React.FC = () => {
                     </div>
                 )}
 
-                <div className={`flex flex-col min-h-0 bg-slate-900/50 ${isCompactView && appMode === 'presentation' ? 'shrink-0 border-b border-slate-800' : 'flex-1'}`}>
+                <div className={`flex flex-col min-h-0 bg-slate-900/50 ${isCompactView && appMode === 'presentation' ? 'shrink-0 border-b border-slate-800' : 'flex-1'} ${isControlsDisabled ? 'pointer-events-none' : ''}`}>
                     {appMode === 'editing' && (
                         <div className="p-2 border-b border-slate-800 flex items-center gap-2 bg-slate-800/30">
                             <Zap className="w-4 h-4 text-amber-400" />
@@ -1616,7 +1632,7 @@ const App: React.FC = () => {
               )}
           </div>
 
-          <div className="shrink-0 h-24 bg-slate-900 border-t border-slate-800 z-20 shadow-[0_-5px_15px_rgba(0,0,0,0.5)]">
+          <div className={`shrink-0 h-24 bg-slate-900 border-t border-slate-800 z-20 shadow-[0_-5px_15px_rgba(0,0,0,0.5)] ${isControlsDisabled ? 'pointer-events-none' : ''}`}>
              <PlayerControls 
                 state={playerState}
                 onPlayPause={() => playerState.isPlaying && playbackSource === 'html5' ? requestPause() : requestMainPlay()} 
@@ -1631,6 +1647,7 @@ const App: React.FC = () => {
                 endTime={editingTarget?.trimEnd || 0}
                 appMode={appMode}
                 language={language}
+                readOnly={isControlsDisabled} // Pass ReadOnly prop
              />
           </div>
       </div>

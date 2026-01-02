@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Wifi, Server, Smartphone, Monitor, CheckCircle2, XCircle, Loader2, Network, X, History, DownloadCloud, Lock, UserCircle } from 'lucide-react';
+import { Wifi, Server, Smartphone, Monitor, CheckCircle2, XCircle, Loader2, Network, X, History, DownloadCloud, Lock, UserCircle, Trash2, Power, MessageSquare } from 'lucide-react';
 import { RemoteSyncHook } from '../../hooks/useRemoteSync';
 import { isAndroidPlatform, extractFileName } from '../../utils/platformUtils';
 import { Song, SfxItem } from '../../types';
@@ -155,6 +155,12 @@ const NetworkModal: React.FC<NetworkModalProps> = ({
         }
     };
 
+    const handleKick = (clientId: string, clientName: string) => {
+        if (window.confirm(`Sei sicuro di voler disconnettere ${clientName}?`)) {
+            sync.kickClient(clientId);
+        }
+    };
+
     if (!isOpen) return null;
 
     return (
@@ -217,26 +223,70 @@ const NetworkModal: React.FC<NetworkModalProps> = ({
                         <div className="flex flex-col gap-4 items-center text-center">
                             {sync.status === 'connected' && sync.role === 'master' ? (
                                 <div className="w-full flex flex-col gap-2">
-                                    <div className="text-xs text-slate-400">
-                                        Indirizzi IP rilevati (connetti il Tablet a uno di questi):
+                                    <div className="text-xs text-slate-400 text-left mb-1">
+                                        Indirizzi IP (Regia):
                                     </div>
-                                    <div className="max-h-32 overflow-y-auto space-y-1 pr-1">
+                                    <div className="flex flex-wrap gap-2 mb-4">
                                         {sync.serverIPs.map((ipObj, idx) => (
-                                            <div key={idx} className="bg-slate-800 rounded-lg p-2 border border-slate-700 flex items-center justify-between">
-                                                <div className="flex items-center gap-2">
-                                                    <Network className="w-3 h-3 text-slate-500" />
-                                                    <span className="text-[10px] font-bold text-slate-400 uppercase">{ipObj.name}</span>
-                                                </div>
-                                                <div className="text-sm font-mono font-bold text-emerald-400 tracking-wide select-all">
+                                            <div key={idx} className="bg-slate-800 rounded-lg p-2 border border-slate-700 flex items-center gap-2">
+                                                <Network className="w-3 h-3 text-emerald-400" />
+                                                <span className="text-sm font-mono font-bold text-white select-all">
                                                     {ipObj.address}
-                                                </div>
+                                                </span>
                                             </div>
                                         ))}
                                     </div>
                                     
-                                    <div className="mt-1 pt-2 border-t border-slate-700 flex justify-between items-center">
-                                        <span className="text-xs text-slate-300">{t.clients_connected}</span>
-                                        <span className="px-2 py-0.5 bg-indigo-500/20 text-indigo-300 rounded-full text-[10px] font-bold">{sync.clientCount}</span>
+                                    <div className="text-xs text-slate-400 text-left mb-1 border-t border-slate-800 pt-2 flex justify-between items-center">
+                                        <span>Dispositivi Connessi ({sync.clientCount})</span>
+                                    </div>
+
+                                    <div className="max-h-60 overflow-y-auto space-y-2 pr-1">
+                                        {sync.clients.map((client, idx) => (
+                                            <div key={client.id} className="bg-slate-800/80 rounded-xl p-3 border border-slate-700 flex flex-col gap-2">
+                                                <div className="flex items-center justify-between">
+                                                    <div className="flex items-center gap-3">
+                                                        <div className={`w-8 h-8 rounded-full flex items-center justify-center ${client.locked ? 'bg-indigo-500/20 text-indigo-400' : 'bg-emerald-500/20 text-emerald-400'}`}>
+                                                            <Smartphone className="w-4 h-4" />
+                                                        </div>
+                                                        <div className="text-left">
+                                                            <div className="text-sm font-bold text-white truncate max-w-[120px]">{client.name}</div>
+                                                            <div className="text-[10px] font-mono text-slate-500">{client.ip}</div>
+                                                        </div>
+                                                    </div>
+                                                    
+                                                    <button 
+                                                        onClick={() => handleKick(client.id, client.name)}
+                                                        className="p-2 text-slate-500 hover:text-red-400 hover:bg-red-900/20 rounded-lg transition-colors"
+                                                        title="Disconnetti (Kick)"
+                                                    >
+                                                        <Trash2 className="w-4 h-4" />
+                                                    </button>
+                                                </div>
+
+                                                {/* Permission Toggle Row */}
+                                                <div className="flex items-center justify-between bg-slate-900/50 rounded-lg p-2 px-3">
+                                                    <span className="text-[10px] font-bold uppercase text-slate-400">Permessi Regia</span>
+                                                    <div className="flex items-center gap-2">
+                                                        <span className={`text-[9px] font-bold ${client.locked ? 'text-indigo-400' : 'text-emerald-400'}`}>
+                                                            {client.locked ? 'SOLO CHAT' : 'COMPLETI'}
+                                                        </span>
+                                                        <button 
+                                                            onClick={() => sync.setClientPermission(client.id, !client.locked)}
+                                                            className={`w-10 h-5 rounded-full relative transition-colors ${!client.locked ? 'bg-emerald-600' : 'bg-slate-700'}`}
+                                                            title={client.locked ? "Sblocca Comandi" : "Blocca Comandi (Solo Chat)"}
+                                                        >
+                                                            <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all shadow-sm ${!client.locked ? 'left-5.5' : 'left-0.5'}`} />
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        ))}
+                                        {sync.clientCount === 0 && (
+                                            <div className="p-4 text-center text-slate-600 italic text-xs">
+                                                In attesa di connessioni...
+                                            </div>
+                                        )}
                                     </div>
                                 </div>
                             ) : (
@@ -246,7 +296,7 @@ const NetworkModal: React.FC<NetworkModalProps> = ({
                             )}
 
                             {sync.status === 'connected' && sync.role === 'master' ? (
-                                <button onClick={sync.stopServer} className="w-full py-2.5 bg-red-900/30 hover:bg-red-900/50 text-red-400 border border-red-900 rounded-xl font-bold transition-all text-sm">
+                                <button onClick={sync.stopServer} className="w-full py-2.5 bg-red-900/30 hover:bg-red-900/50 text-red-400 border border-red-900 rounded-xl font-bold transition-all text-sm mt-4">
                                     {t.server_stop}
                                 </button>
                             ) : (
@@ -323,6 +373,14 @@ const NetworkModal: React.FC<NetworkModalProps> = ({
                                           <UserCircle className="w-4 h-4 text-emerald-400" />
                                           <span className="text-xs text-slate-300">Connesso come: <b>{clientName}</b></span>
                                      </div>
+
+                                     {/* READ ONLY STATUS INDICATOR */}
+                                     {sync.isReadOnly && (
+                                         <div className="bg-indigo-900/30 border border-indigo-500/30 rounded-lg p-2 flex items-center justify-center gap-2">
+                                             <MessageSquare className="w-4 h-4 text-indigo-400" />
+                                             <span className="text-xs font-bold text-indigo-300 uppercase">Modalità Solo Chat Attiva</span>
+                                         </div>
+                                     )}
 
                                      {/* DOWNLOAD SECTION (Only if tracks present) */}
                                      {songs.length > 0 && (

@@ -7,6 +7,7 @@ import { fileURLToPath } from 'url';
 import { WebSocketServer } from 'ws';
 import http from 'http';
 import os from 'os';
+import { randomUUID } from 'crypto';
 
 // Ricostruzione di __dirname in ESM
 const __filename = fileURLToPath(import.meta.url);
@@ -17,7 +18,7 @@ let mainWindow;
 // --- SERVER VARIABLES ---
 let wss = null;       // WebSocket Server instance
 let httpServer = null; // HTTP Server for files
-let connectedClients = new Set();
+let connectedClients = new Map(); // CHANGED: Set -> Map<WebSocket, ClientInfo>
 const WS_PORT = 8080;
 const HTTP_PORT = 8081;
 
@@ -39,6 +40,14 @@ function getLocalIPs() {
     return ips.length > 0 ? ips : [{ name: 'Loopback', address: '127.0.0.1' }];
 }
 
+function broadcastClientList() {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+        // Convert Map values to Array
+        const clients = Array.from(connectedClients.values());
+        mainWindow.webContents.send('server:status', clients);
+    }
+}
+
 function startServer(pin = "") {
     if (wss) return { ips: getLocalIPs(), port: WS_PORT };
 
@@ -49,11 +58,12 @@ function startServer(pin = "") {
         // 1. WebSocket Server (Comandi)
         wss = new WebSocketServer({ port: WS_PORT });
         
-        wss.on('connection', (ws) => {
+        wss.on('connection', (ws, req) => {
             console.log('Client attempting connection...');
             
-            // NOTE: We do NOT add to connectedClients yet. 
-            // We wait for handshake.
+            // Assign a unique ID to this socket connection
+            ws.clientId = randomUUID();
+            ws.clientIp = req.socket.remoteAddress?.replace('::ffff:', '') || 'Unknown';
             ws.isAuth = false;
 
             ws.on('message', (message) => {
@@ -68,15 +78,29 @@ function startServer(pin = "") {
                             ws.isAuth = true;
                             ws.deviceName = parsed.device || "Unknown Client";
                             
-                            connectedClients.add(ws);
-                            console.log(`Client Authenticated: ${ws.deviceName}`);
+                            // DEFAULT STATE: LOCKED (Solo Chat) = TRUE
+                            const initialLockState = true; 
                             
-                            ws.send(JSON.stringify({ type: 'HANDSHAKE_OK' }));
+                            // Store client info
+                            connectedClients.set(ws, {
+                                id: ws.clientId,
+                                name: ws.deviceName,
+                                ip: ws.clientIp,
+                                locked: initialLockState // Persist in Server RAM
+                            });
+
+                            console.log(`Client Authenticated: ${ws.deviceName} (${ws.clientId})`);
                             
-                            // Notify Frontend of new count
-                            if (mainWindow && !mainWindow.isDestroyed()) {
-                                mainWindow.webContents.send('server:status', connectedClients.size);
-                            }
+                            // Send OK with assigned ID AND Initial Permission State
+                            ws.send(JSON.stringify({ 
+                                type: 'HANDSHAKE_OK', 
+                                clientId: ws.clientId,
+                                locked: initialLockState 
+                            }));
+                            
+                            // Notify Frontend of new list
+                            broadcastClientList();
+
                         } else {
                             // AUTH FAIL
                             console.log('Client PIN Fail');
@@ -88,7 +112,6 @@ function startServer(pin = "") {
 
                     // --- NORMAL COMMANDS (Only if Auth) ---
                     if (ws.isAuth) {
-                        console.log(`Received from ${ws.deviceName}:`, parsed);
                         // Forward to React
                         if (mainWindow && !mainWindow.isDestroyed()) {
                             // Inject sender info if missing (for Chat)
@@ -107,9 +130,7 @@ function startServer(pin = "") {
                 if (ws.isAuth) {
                     console.log(`Client disconnected: ${ws.deviceName}`);
                     connectedClients.delete(ws);
-                    if (mainWindow && !mainWindow.isDestroyed()) {
-                        mainWindow.webContents.send('server:status', connectedClients.size);
-                    }
+                    broadcastClientList();
                 }
             });
         });
@@ -165,11 +186,25 @@ function stopServer() {
     connectedClients.clear();
     serverPin = "";
     
-    // FIX: Check if window exists before sending
-    if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('server:status', 0);
-    }
+    // Notify empty list
+    broadcastClientList();
     return true;
+}
+
+function kickClient(clientId) {
+    if (!wss) return false;
+    let found = false;
+    for (const ws of wss.clients) {
+        if (ws.clientId === clientId) {
+            ws.close();
+            connectedClients.delete(ws);
+            found = true;
+            console.log(`Kicked client: ${clientId}`);
+            break;
+        }
+    }
+    if (found) broadcastClientList();
+    return found;
 }
 
 
@@ -284,7 +319,7 @@ app.whenReady().then(() => {
 
   // --- V2.0 SERVER HANDLERS ---
   
-  // Start Server (MODIFIED: ACCEPTS PIN)
+  // Start Server
   ipcMain.handle('server:start', async (event, pin) => {
       return startServer(pin);
   });
@@ -294,6 +329,11 @@ app.whenReady().then(() => {
       return stopServer();
   });
 
+  // Kick Client
+  ipcMain.handle('server:kick', async (event, clientId) => {
+      return kickClient(clientId);
+  });
+
   // Get IP
   ipcMain.handle('server:get-ip', async () => {
       return getLocalIPs();
@@ -301,12 +341,30 @@ app.whenReady().then(() => {
 
   // Broadcast to Clients (from React -> WS Clients)
   ipcMain.handle('server:broadcast', async (event, data) => {
-      const msg = JSON.stringify(data);
-      connectedClients.forEach(client => {
-          if (client.readyState === 1 && client.isAuth) { // Only send to Auth clients
-              client.send(msg);
+      
+      // INTERCEPT PERMISSION CHANGES to update Server RAM State
+      if (data.type === 'SET_PERMISSION' && data.targetId) {
+          for (const [ws, info] of connectedClients.entries()) {
+              if (info.id === data.targetId) {
+                  // Update RAM
+                  const newInfo = { ...info, locked: data.locked };
+                  connectedClients.set(ws, newInfo);
+                  break;
+              }
           }
-      });
+          // We don't need to broadcast list here because React usually updates local state optimistically, 
+          // but syncing it keeps it robust.
+          broadcastClientList();
+      }
+
+      const msg = JSON.stringify(data);
+      if (wss) {
+          wss.clients.forEach(client => {
+            if (client.readyState === 1 && client.isAuth) {
+                client.send(msg);
+            }
+          });
+      }
   });
 
   createWindow();
@@ -317,8 +375,6 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', function () {
-    // Note: Do NOT call stopServer() here if it tries to send events to the window.
-    // However, we want to close ports. The updated stopServer handles the check internally.
     stopServer(); 
     if (process.platform !== 'darwin') app.quit();
 });

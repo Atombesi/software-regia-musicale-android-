@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Song, AppMode, Language } from '../types';
-import { Music2, PlayCircle, PauseCircle, Upload, Disc, Check, Edit3, MonitorPlay, RotateCcw, Save, Scissors, Wind, SignalHigh, GripVertical, Plus, AlertTriangle, Activity, Trash2, FileSignature, Info, Link2, ChevronUp, ChevronDown, StickyNote, Minimize2, Maximize2, FilePenLine, FileText } from 'lucide-react';
+import { Music2, PlayCircle, PauseCircle, Upload, Disc, Check, Edit3, MonitorPlay, RotateCcw, Save, Scissors, Wind, SignalHigh, GripVertical, Plus, AlertTriangle, Activity, Trash2, FileSignature, Info, Link2, ChevronUp, ChevronDown, StickyNote, Minimize2, Maximize2, FilePenLine, FileText, MessageSquare } from 'lucide-react';
 import { translations } from '../translations';
 
 interface PlaylistViewProps {
@@ -32,6 +32,7 @@ interface PlaylistViewProps {
   appVersion?: string; // NEW PROP: App Version String
   isAndroid?: boolean; // NEW PROP: Platform check
   onOpenLog?: () => void; // NEW PROP: Open Log Viewer
+  readOnly?: boolean; // NEW: Interaction Lock
 }
 
 // --- HELPER: Format Duration (MM:SS) ---
@@ -142,7 +143,8 @@ const PlaylistView: React.FC<PlaylistViewProps> = ({
   onToggleCompactView,
   appVersion,
   isAndroid = false,
-  onOpenLog 
+  onOpenLog,
+  readOnly = false
 }) => {
   const activeRef = useRef<HTMLButtonElement>(null);
   const t = translations[language];
@@ -163,7 +165,7 @@ const PlaylistView: React.FC<PlaylistViewProps> = ({
     } else {
         classes += 'border-transparent text-slate-300 ';
         // In Editing: Hover effects allowed
-        if (appMode === 'editing') {
+        if (appMode === 'editing' && !readOnly) {
             classes += 'bg-slate-800/40 hover:bg-slate-800 hover:border-slate-700 cursor-pointer ';
         } else {
             // In Live: Check if played (previous track)
@@ -191,6 +193,8 @@ const PlaylistView: React.FC<PlaylistViewProps> = ({
   };
 
   const handleRowClick = (index: number, isActive: boolean, isMissing: boolean) => {
+      if (readOnly) return; // Completely disabled
+
       if (isMissing) {
           // Trigger Relink Logic
           onRelink(index);
@@ -206,71 +210,80 @@ const PlaylistView: React.FC<PlaylistViewProps> = ({
   };
 
   return (
-    <div className="flex flex-col h-full bg-slate-900/50 backdrop-blur-sm transition-colors duration-500 border-r border-slate-800">
+    <div className={`flex flex-col h-full bg-slate-900/50 backdrop-blur-sm transition-colors duration-500 border-r border-slate-800 ${readOnly ? 'pointer-events-none' : ''}`}>
       
       {/* HEADER: Mode Switch & Tools */}
       <div className="shrink-0 p-4 border-b border-slate-800 bg-slate-900/95 z-10 flex flex-col gap-2">
         
-        {/* Top Row: Title + Mode Toggle */}
+        {/* Top Row: Title + Mode Toggle OR SOLO CHAT BADGE */}
         <div className="flex items-center justify-between">
              <div className="flex items-center gap-2">
-                 <button 
-                    onClick={onRequestModeChange}
-                    className={`flex items-center gap-2 px-3 py-1.5 rounded-full border transition-all ${
-                        appMode === 'editing' 
-                            ? 'bg-amber-500/20 border-amber-500 text-amber-400' 
-                            : 'bg-emerald-500/20 border-emerald-500 text-emerald-400'
-                    }`}
-                 >
-                    {appMode === 'editing' ? <Edit3 className="w-4 h-4"/> : <MonitorPlay className="w-4 h-4"/>}
-                    <span className="text-xs font-bold uppercase tracking-wider">
-                        {appMode === 'editing' ? t.mode_editing : t.mode_live}
-                    </span>
-                 </button>
-                 
-                 {/* RAW EDITOR BUTTON - ONLY EDITING */}
-                 {appMode === 'editing' && (
-                    <button
-                        onClick={onOpenRawEditor}
-                        className="p-1.5 rounded-full transition-colors border bg-slate-800 border-slate-600 text-slate-400 hover:text-white hover:border-indigo-500 hover:bg-slate-700"
-                        title="Editor Testuale Playlist (Raw)"
-                    >
-                        <FileSignature className="w-4 h-4" />
-                    </button>
-                 )}
-
-                 {/* INFO BUTTON (EDITING ONLY) */}
-                 {appMode === 'editing' && (
-                    <button
-                        onClick={onOpenInfo}
-                        className="p-1.5 rounded-full transition-colors border bg-slate-800 border-slate-600 text-slate-500 hover:text-white hover:border-slate-400"
-                        title={t.info_credits}
-                    >
-                        <Info className="w-4 h-4" />
-                    </button>
-                 )}
-
-                 {/* COMPACT MODE BUTTON (LIVE ONLY) */}
-                 {appMode === 'presentation' && onToggleCompactView && (
-                    <button
-                        onClick={onToggleCompactView}
-                        className={`p-1.5 rounded-full transition-colors border ${isCompactView ? 'bg-indigo-500 text-white border-indigo-400' : 'bg-slate-800 border-slate-600 text-slate-500 hover:text-white hover:border-slate-400'}`}
-                        title={isCompactView ? "Expand View" : "Compact View"}
-                    >
-                        {isCompactView ? <Maximize2 className="w-4 h-4" /> : <Minimize2 className="w-4 h-4" />}
-                    </button>
-                 )}
-
-                 {/* Version - Windows Only (MOVED HERE) */}
-                 {!isAndroid && appVersion && (
-                     <div className="text-[9px] font-bold text-slate-600 select-none shrink-0 ml-2 border border-slate-700/50 px-1.5 py-0.5 rounded">
-                         {appVersion}
+                 {readOnly ? (
+                     <div className="flex items-center gap-2 px-4 py-2 rounded-full bg-indigo-900/50 border border-indigo-500 text-indigo-300 shadow-[0_0_15px_rgba(99,102,241,0.3)] animate-pulse">
+                         <MessageSquare className="w-4 h-4" />
+                         <span className="text-xs font-black uppercase tracking-widest">SOLO CHAT</span>
                      </div>
+                 ) : (
+                     <>
+                         <button 
+                            onClick={onRequestModeChange}
+                            className={`flex items-center gap-2 px-3 py-1.5 rounded-full border transition-all ${
+                                appMode === 'editing' 
+                                    ? 'bg-amber-500/20 border-amber-500 text-amber-400' 
+                                    : 'bg-emerald-500/20 border-emerald-500 text-emerald-400'
+                            }`}
+                         >
+                            {appMode === 'editing' ? <Edit3 className="w-4 h-4"/> : <MonitorPlay className="w-4 h-4"/>}
+                            <span className="text-xs font-bold uppercase tracking-wider">
+                                {appMode === 'editing' ? t.mode_editing : t.mode_live}
+                            </span>
+                         </button>
+                         
+                         {/* RAW EDITOR BUTTON - ONLY EDITING */}
+                         {appMode === 'editing' && (
+                            <button
+                                onClick={onOpenRawEditor}
+                                className="p-1.5 rounded-full transition-colors border bg-slate-800 border-slate-600 text-slate-400 hover:text-white hover:border-indigo-500 hover:bg-slate-700"
+                                title="Editor Testuale Playlist (Raw)"
+                            >
+                                <FileSignature className="w-4 h-4" />
+                            </button>
+                         )}
+
+                         {/* INFO BUTTON (EDITING ONLY) */}
+                         {appMode === 'editing' && (
+                            <button
+                                onClick={onOpenInfo}
+                                className="p-1.5 rounded-full transition-colors border bg-slate-800 border-slate-600 text-slate-500 hover:text-white hover:border-slate-400"
+                                title={t.info_credits}
+                            >
+                                <Info className="w-4 h-4" />
+                            </button>
+                         )}
+
+                         {/* COMPACT MODE BUTTON (LIVE ONLY) */}
+                         {appMode === 'presentation' && onToggleCompactView && (
+                            <button
+                                onClick={onToggleCompactView}
+                                className={`p-1.5 rounded-full transition-colors border ${isCompactView ? 'bg-indigo-500 text-white border-indigo-400' : 'bg-slate-800 border-slate-600 text-slate-500 hover:text-white hover:border-slate-400'}`}
+                                title={isCompactView ? "Expand View" : "Compact View"}
+                            >
+                                {isCompactView ? <Maximize2 className="w-4 h-4" /> : <Minimize2 className="w-4 h-4" />}
+                            </button>
+                         )}
+
+                         {/* Version - Windows Only (MOVED HERE) */}
+                         {!isAndroid && appVersion && (
+                             <div className="text-[9px] font-bold text-slate-600 select-none shrink-0 ml-2 border border-slate-700/50 px-1.5 py-0.5 rounded">
+                                 {appVersion}
+                             </div>
+                         )}
+                     </>
                  )}
              </div>
 
              <div className="flex gap-2">
-                {appMode === 'presentation' && (
+                {!readOnly && appMode === 'presentation' && (
                     <button 
                         onClick={onRequestReset}
                         className="flex items-center gap-1 px-3 py-1.5 text-xs font-bold uppercase text-white bg-red-600 hover:bg-red-500 rounded-lg transition-colors shadow-lg shadow-red-900/20"
@@ -281,7 +294,7 @@ const PlaylistView: React.FC<PlaylistViewProps> = ({
                     </button>
                 )}
 
-                 {appMode === 'editing' && songs.length > 0 && (
+                 {!readOnly && appMode === 'editing' && songs.length > 0 && (
                     <>
                          {/* LOG VIEWER BUTTON - ONLY IF AVAILABLE */}
                          {onOpenLog && (
@@ -332,7 +345,7 @@ const PlaylistView: React.FC<PlaylistViewProps> = ({
 
             <div className="flex gap-2 items-center">
                 {/* LOAD BUTTON - EDITING ONLY */}
-                {appMode === 'editing' && (
+                {!readOnly && appMode === 'editing' && (
                     <button
                         onClick={onLoadNew}
                         className="flex items-center gap-2 px-3 py-1.5 bg-slate-800 hover:bg-indigo-600 text-xs font-bold uppercase tracking-wider rounded-lg transition-colors text-slate-300 hover:text-white border border-slate-700 hover:border-indigo-500 shadow-sm"
@@ -374,21 +387,21 @@ const PlaylistView: React.FC<PlaylistViewProps> = ({
               key={song.id}
               ref={isActive ? activeRef : null}
               onClick={() => handleRowClick(index, isActive, isMissing)}
-              disabled={isPlayedLive} // Remove disabled for missing, handle in onClick
+              disabled={isPlayedLive || readOnly} // Remove disabled for missing, handle in onClick
               className={`w-full group flex items-center gap-4 p-4 rounded-xl transition-all duration-200 text-left border ${getRowStyles(index, isActive, isPlayedLive, isMissing)}`}
             >
               {/* Index Column - CLICKABLE BADGE IN EDITING */}
               <div 
                 onClick={(e) => {
                     // IF IN EDITING MODE: Click triggers RELINK (change file)
-                    if (appMode === 'editing') {
+                    if (appMode === 'editing' && !readOnly) {
                         e.stopPropagation(); // Stop row select
                         onRelink(index);
                     }
                 }}
                 title={appMode === 'editing' ? t.relink_tooltip_badge : ""}
                 className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 transition-all z-10 
-                ${appMode === 'editing' ? 'cursor-pointer hover:scale-110 hover:ring-2 hover:ring-emerald-400' : ''}
+                ${appMode === 'editing' && !readOnly ? 'cursor-pointer hover:scale-110 hover:ring-2 hover:ring-emerald-400' : ''}
                 ${isMissing 
                     ? 'bg-red-900 text-red-500 group-hover:bg-red-800' 
                     : isActive 
@@ -460,7 +473,7 @@ const PlaylistView: React.FC<PlaylistViewProps> = ({
               
               {/* RIGHT COLUMN: Interaction Controls Only (Arrows + Trash) */}
               <div className="flex items-center gap-3 shrink-0 ml-2">
-                  {appMode === 'editing' && (
+                  {appMode === 'editing' && !readOnly && (
                       <>
                         {/* MOVE BUTTONS - STACKED LEFT OF TRASH */}
                         <div className="flex flex-col gap-1">
@@ -497,7 +510,7 @@ const PlaylistView: React.FC<PlaylistViewProps> = ({
           );
         })}
 
-        {appMode === 'editing' && (
+        {appMode === 'editing' && !readOnly && (
              <div className="pt-2 pb-8">
                  <button 
                     onClick={onAddTrack}
