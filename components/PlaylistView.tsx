@@ -413,7 +413,7 @@ const PlaylistView: React.FC<PlaylistViewProps> = ({
                     <Link2 className="w-5 h-5 animate-pulse" />
                 ) : isActive ? (
                    // Show Activity/Music Icon if active, but NOT a button
-                   <Activity className={`w-5 h-5 ${isPlaying ? 'animate-pulse' : ''}`} />
+                   <Disc className={`w-5 h-5 ${isPlaying ? 'animate-spin' : ''}`} />
                 ) : isPlayedLive ? (
                    <Check className="w-4 h-4" />
                 ) : (

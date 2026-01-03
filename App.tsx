@@ -37,7 +37,7 @@ import TimeEditModal from './components/modals/TimeEditModal';
 import NetworkModal from './components/modals/NetworkModal';
 import ChatModal from './components/modals/ChatModal'; 
 
-export const APP_VERSION = "Ver 2.5";
+export const APP_VERSION = "Ver 2.6";
 
 const App: React.FC = () => {
   // LANGUAGE STATE
@@ -877,7 +877,13 @@ const App: React.FC = () => {
                 ...old,
                 url: resolvedUrl,
                 path: fullPath,
-                originalFileName: fileInfo.name
+                originalFileName: fileInfo.name,
+                // FIX: Reset Metadata on Relink
+                title: removeExtension(fileInfo.name),
+                trimStart: 0,
+                trimEnd: 0,
+                customGain: 1.0,
+                hasFadeOut: false
            }));
       }
       setPickerState(prev => ({ ...prev, isOpen: false }));

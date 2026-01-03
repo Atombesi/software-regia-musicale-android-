@@ -59,7 +59,7 @@ const PlayerControls: React.FC<PlayerControlsProps> = ({
   const isLive = appMode === 'presentation';
 
   return (
-    <div className={`h-full w-full flex items-center px-4 md:px-8 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.3)] ${readOnly ? 'pointer-events-none grayscale opacity-50' : ''}`}>
+    <div className={`h-full w-full flex items-center px-4 md:px-8 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.3)] ${readOnly ? 'pointer-events-none opacity-80' : ''}`}>
       
       {/* STOP BUTTON (Leftmost) - REDUCED SIZE */}
       <div className="mr-4 shrink-0">
