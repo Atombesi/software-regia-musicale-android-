@@ -4,7 +4,7 @@ import FileLoader from './components/FileLoader';
 import PlaylistView from './components/PlaylistView';
 import PlayerControls from './components/PlayerControls';
 import Waveform from './components/Waveform';
-import { Scissors, Zap, Wind, MapPin, Save, RefreshCcw, Plus, Minus, PlayCircle, PauseCircle, StickyNote, Edit2, X, Pause, SignalHigh, GripVertical, Wifi, Phone, PhoneCall, PhoneIncoming } from 'lucide-react';
+import { Scissors, Zap, Wind, MapPin, Save, RefreshCcw, Plus, Minus, PlayCircle, PauseCircle, StickyNote, Edit2, X, Pause, SignalHigh, GripVertical, Wifi, Phone, PhoneCall, PhoneIncoming, Send } from 'lucide-react';
 import { Capacitor } from '@capacitor/core';
 import { Filesystem, Directory, Encoding, FileInfo } from '@capacitor/filesystem';
 import { translations } from './translations';
@@ -36,8 +36,9 @@ import NoteModal from './components/modals/NoteModal';
 import TimeEditModal from './components/modals/TimeEditModal';
 import NetworkModal from './components/modals/NetworkModal';
 import ChatModal from './components/modals/ChatModal'; 
+import RenameModal from './components/modals/RenameModal';
 
-export const APP_VERSION = "Ver 2.6";
+export const APP_VERSION = "Ver 2.6.2";
 
 const App: React.FC = () => {
   // LANGUAGE STATE
@@ -216,7 +217,10 @@ const App: React.FC = () => {
   const [infoModalOpen, setInfoModalOpen] = useState(false);
   const [rawEditorOpen, setRawEditorOpen] = useState(false);
   const [logViewerOpen, setLogViewerOpen] = useState(false); 
-  const [networkModalOpen, setNetworkModalOpen] = useState(false); 
+  const [networkModalOpen, setNetworkModalOpen] = useState(false);
+  
+  // NEW: Rename Modal State
+  const [renameModal, setRenameModal] = useState<{isOpen: boolean, index: number, name: string}>({isOpen: false, index: -1, name: ''});
 
   const [logContent, setLogContent] = useState(""); 
   const [pendingSaveContent, setPendingSaveContent] = useState<string | null>(null);
@@ -499,7 +503,10 @@ const App: React.FC = () => {
           const dir = playlistState.sourceDirectory;
           if (path && name) {
                writeTextFile(path, name, content, dir)
-                   .then(async () => await addPlaylistToHistory(name, path))
+                   .then(async () => {
+                       await addPlaylistToHistory(name, path);
+                       playlistActions.markAsSaved(); // Reset dirty state on remote save
+                   })
                    .catch(e => console.error("Silent save failed", e));
           }
       }
@@ -521,7 +528,7 @@ const App: React.FC = () => {
   const handleRemotePlaylist = useCallback(async (songs: Song[], sfx: SfxItem[], masterPath?: string) => {
       const processedSongs = await checkAssetsForPlaylist(songs);
       const processedSfx = await checkAssetsForPlaylist(sfx);
-      playlistActions.loadPlaylist(processedSongs, processedSfx, "Remote Playlist", "/remote");
+      playlistActions.loadPlaylist(processedSongs, processedSfx, "Remote Playlist", "/remote", undefined, true); // Treated as new load -> saved state
       setAppMode('presentation'); 
       if (masterPath) setRemoteMasterPath(masterPath);
   }, [playlistActions]);
@@ -793,7 +800,7 @@ const App: React.FC = () => {
       else playlistActions.updateSong(playlistState.currentIndex, (s) => updater(s) as Song);
   };
 
-  const handlePlaylistLoaded = (newSongs: Song[], newSfx: SfxItem[], fileName?: string, path?: string, directory?: Directory) => {
+  const handlePlaylistLoaded = (newSongs: Song[], newSfx: SfxItem[], fileName?: string, path?: string, directory?: Directory, fromDisk: boolean = true) => {
     audioControls.hardReset();
     if (audioRef.current) audioRef.current.src = "";
     showStartTimeRef.current = null;
@@ -815,7 +822,7 @@ const App: React.FC = () => {
         AppGlobals.Playlistpath = "";
     }
     AppGlobals.PlaylistLog = AppGlobals.Playlistpath + "Log_" + AppGlobals.Playlistfilename;
-    playlistActions.loadPlaylist(newSongs, newSfx, fileName, path, directory);
+    playlistActions.loadPlaylist(newSongs, newSfx, fileName, path, directory, fromDisk);
     if (remoteSync.role === 'master' && remoteSync.clientCount > 0) {
         remoteSync.sendPlaylist(newSongs, newSfx, path || undefined);
     }
@@ -826,7 +833,7 @@ const App: React.FC = () => {
       const newSong: Song = { id: `manual-${Date.now()}`, title: removeExtension(file.name), url: URL.createObjectURL(file), artist: 'Manual Load', originalFileName: file.name };
       audioControls.hardReset();
       setEditingSfxIndex(null);
-      playlistActions.loadPlaylist([newSong], new Array(6).fill(undefined));
+      playlistActions.loadPlaylist([newSong], new Array(6).fill(undefined), undefined, undefined, undefined, false); // Manual load = Dirty
       playlistActions.setSourceFilePath(null);
   };
 
@@ -906,7 +913,18 @@ const App: React.FC = () => {
           remoteSync.sendMasterCommand({ type: 'SAVE_PLAYLIST' });
           return;
       }
+      
       const currentFull = playlistState.sourceFilePath || '';
+      
+      // FIX: Ensure FileLoader opens in the current file's directory
+      // This fixes the issue where Quick Save generated a filename-only path
+      if (currentFull) {
+           const dir = EstraiPath(currentFull); // Utility from windowsFileUtils handles slashes
+           if (dir) {
+               setLastExplorerPath(dir);
+           }
+      }
+
       AppGlobals.Fullname = currentFull;
       AppGlobals.Playlistpath = EstraiPath(currentFull);
       if (AppGlobals.Playlistpath && !AppGlobals.Playlistpath.endsWith('/') && !AppGlobals.Playlistpath.endsWith('\\')) {
@@ -914,6 +932,7 @@ const App: React.FC = () => {
       }
       AppGlobals.Playlistfilename = EstraiName(currentFull);
       AppGlobals.PlaylistLog = AppGlobals.Playlistpath + "Log_" + AppGlobals.Playlistfilename;
+      
       setPickerState({ isOpen: true, target: 'save' });
   };
 
@@ -951,6 +970,9 @@ const App: React.FC = () => {
            URL.revokeObjectURL(url);
            setSaveSuccessModal({ isOpen: true, location: 'Download Browser', fileName: fileName });
            setPickerState(prev => ({ ...prev, isOpen: false }));
+           
+           // MARK AS SAVED
+           playlistActions.markAsSaved();
            return;
       }
       try {
@@ -959,6 +981,10 @@ const App: React.FC = () => {
           playlistActions.setSourceFileName(fileName);
           playlistActions.setSourceFilePath(fullPath);
           playlistActions.setSourceDirectory(directory);
+          
+          // MARK AS SAVED
+          playlistActions.markAsSaved();
+
           setSaveSuccessModal({ isOpen: true, location: fullPath, fileName: fileName });
           setPickerState(prev => ({ ...prev, isOpen: false }));
           AppGlobals.Fullname = fullPath;
@@ -1193,9 +1219,49 @@ const App: React.FC = () => {
     return { songs, sfx };
   };
 
+  // --- FIX: SMART RAW EDITOR SAVE ---
   const handleRawSaveRequest = (content: string) => {
-     const { songs, sfx } = parsePlaylistContent(content);
-     handlePlaylistLoaded(songs, sfx, playlistState.sourceFileName, playlistState.sourceFilePath || undefined, playlistState.sourceDirectory);
+     const { songs: parsedSongs, sfx: parsedSfx } = parsePlaylistContent(content);
+     
+     // 1. Merge Songs: Preserve URL (File Protocol) if path matches existing
+     const mergedSongs = parsedSongs.map(newSong => {
+         const existing = playlistState.songs.find(old => {
+             // Compare by path or filename (trim to be safe)
+             const p1 = (old.path || "").trim();
+             const p2 = (newSong.path || "").trim();
+             const f1 = (old.originalFileName || "").trim();
+             const f2 = (newSong.originalFileName || "").trim();
+             
+             return (p1 && p2 && p1 === p2) || (f1 && f2 && f1 === f2);
+         });
+
+         if (existing) {
+             // Keep the working URL and ID from the existing song
+             return { ...newSong, url: existing.url, id: existing.id };
+         }
+         return newSong;
+     });
+
+     // 2. Merge SFX
+     const mergedSfx = parsedSfx.map((newSfx, idx) => {
+         if (!newSfx) return undefined;
+         const existing = playlistState.sfxItems[idx];
+         if (existing) {
+             const p1 = (existing.path || "").trim();
+             const p2 = (newSfx.path || "").trim();
+             const f1 = (existing.originalFileName || "").trim();
+             const f2 = (newSfx.originalFileName || "").trim();
+             
+             if ((p1 && p2 && p1 === p2) || (f1 && f2 && f1 === f2)) {
+                 return { ...newSfx, url: existing.url, id: existing.id };
+             }
+         }
+         return newSfx;
+     }) as SfxItem[];
+
+     // 3. Load Merged Data
+     // IMPORTANT: Pass `false` for fromDisk to indicate this is an edit, not a fresh load.
+     handlePlaylistLoaded(mergedSongs, mergedSfx, playlistState.sourceFileName, playlistState.sourceFilePath || undefined, playlistState.sourceDirectory, false);
      setRawEditorOpen(false);
   };
 
@@ -1229,16 +1295,15 @@ const App: React.FC = () => {
                 />
             </div>
             
-            {enableNetwork && (
-                <div className="absolute bottom-6 right-6 z-50">
-                    <button 
-                        onClick={() => setNetworkModalOpen(true)}
-                        className={`p-3 rounded-full shadow-lg border transition-all ${remoteSync.status === 'connected' ? 'bg-emerald-600 text-white border-emerald-500' : 'bg-slate-800 text-indigo-400 border-slate-700 hover:border-indigo-500'}`}
-                    >
-                        <Wifi className="w-6 h-6" />
-                    </button>
-                </div>
-            )}
+            {/* NETWORK ICON - LOADING SCREEN - FORCE VISIBILITY */}
+            <div className="absolute bottom-6 right-6 z-[9999]">
+                <button 
+                    onClick={() => setNetworkModalOpen(true)}
+                    className={`p-3 rounded-full shadow-lg border transition-all ${remoteSync.status === 'connected' ? 'bg-emerald-600 text-white border-emerald-500' : 'bg-slate-800 text-indigo-400 border-slate-700 hover:border-indigo-500'}`}
+                >
+                    <Wifi className="w-6 h-6" />
+                </button>
+            </div>
             
             <InfoModal isOpen={infoModalOpen} onClose={() => setInfoModalOpen(false)} t={t} appVersion={APP_VERSION} />
             <NetworkModal 
@@ -1334,7 +1399,9 @@ const App: React.FC = () => {
                     appVersion={APP_VERSION}
                     isAndroid={isAndroid}
                     onOpenLog={(!isAndroid && logFileExists && appMode === 'editing') ? handleOpenLogViewer : undefined}
-                    readOnly={isControlsDisabled} // Pass readonly prop
+                    readOnly={isControlsDisabled} 
+                    onRenameSong={(idx) => setRenameModal({isOpen: true, index: idx, name: playlistState.songs[idx].title})}
+                    hasUnsavedChanges={playlistState.hasUnsavedChanges}
                 />
               </div>
 
@@ -1350,38 +1417,8 @@ const App: React.FC = () => {
               )}
 
               <div className="flex-1 flex flex-col bg-slate-900 border-l border-slate-800 min-w-0 overflow-hidden relative">
-                {!pickerState.isOpen && enableNetwork && (
-                    <div className="absolute top-4 right-4 z-[60] flex gap-2">
-                        <button 
-                            onClick={() => setNetworkModalOpen(true)}
-                            className={`p-1.5 rounded-full border transition-all shadow-lg flex items-center gap-2 px-3 ${
-                                remoteSync.status === 'connected' 
-                                    ? 'bg-emerald-600/90 text-white border-emerald-500 hover:bg-emerald-500' 
-                                    : 'bg-slate-800/80 text-indigo-400 border-slate-600 hover:border-indigo-500'
-                            }`}
-                        >
-                            <Wifi className="w-4 h-4" />
-                            {remoteSync.status === 'connected' && <span className="text-xs font-bold uppercase">{remoteSync.role === 'master' ? `Master (${remoteSync.clientCount})` : 'Slave'}</span>}
-                        </button>
-                        {remoteSync.status === 'connected' && (
-                            <button 
-                                onClick={handleStartCall}
-                                className={`p-2 rounded-full border transition-all shadow-lg flex items-center justify-center ${
-                                    callStatus === 'ringing'
-                                        ? 'bg-amber-500 text-white border-amber-400 animate-pulse ring-4 ring-amber-500/30'
-                                        : callStatus === 'calling'
-                                            ? 'bg-emerald-600 text-white border-emerald-500 animate-pulse'
-                                            : callStatus === 'connected'
-                                                ? 'bg-emerald-500 text-white border-emerald-400'
-                                                : 'bg-white text-slate-900 border-slate-300 hover:bg-slate-100'
-                                }`}
-                                title={callStatus === 'ringing' ? t.call_answer : t.chat_title}
-                            >
-                                {callStatus === 'ringing' ? <PhoneIncoming className="w-5 h-5" /> : (callStatus === 'calling' ? <PhoneCall className="w-5 h-5" /> : <Phone className="w-5 h-5" />)}
-                            </button>
-                        )}
-                    </div>
-                )}
+                
+                {/* MOVED NETWORK ICONS OUT OF HERE TO ROOT FOR Z-INDEX FIX */}
 
                 <div className={`${waveformHeightClass} shrink-0 border-b border-slate-800 relative bg-black/40 transition-[height] duration-300 overflow-hidden`}>
                     {showWaveform ? (
@@ -1505,14 +1542,17 @@ const App: React.FC = () => {
                                         </button>
                                     )}
 
-                                    <button
-                                        ref={localSaveBtnRef}
-                                        onClick={handleLocalCommit}
-                                        className="h-10 w-10 ml-2 rounded-xl border border-slate-600 bg-slate-800 text-slate-400 hover:text-white hover:border-emerald-500 transition-all flex items-center justify-center"
-                                        title={t.commit_tooltip}
-                                    >
-                                        <Save className="w-5 h-5" />
-                                    </button>
+                                    {/* --- REMOTE SYNC BUTTON (Visible ONLY in SLAVE Mode) --- */}
+                                    {remoteSync.role === 'slave' && (
+                                        <button
+                                            ref={localSaveBtnRef}
+                                            onClick={handleLocalCommit}
+                                            className="h-10 w-10 ml-2 rounded-xl border border-emerald-500/50 bg-slate-800 text-emerald-400 hover:text-white hover:bg-emerald-600 transition-all flex items-center justify-center shadow-lg"
+                                            title={t.commit_tooltip}
+                                        >
+                                            <Send className="w-5 h-5" />
+                                        </button>
+                                    )}
                                 </div>
                             </>
                         )}
@@ -1656,6 +1696,40 @@ const App: React.FC = () => {
                 readOnly={isControlsDisabled} // Pass ReadOnly prop
              />
           </div>
+          
+          {/* --- FIXED NETWORK & CHAT BUTTONS (MOVED OUTSIDE PANELS) --- */}
+          {!pickerState.isOpen && (
+              <div className="fixed top-4 right-4 z-[100] flex gap-2">
+                  <button 
+                      onClick={() => setNetworkModalOpen(true)}
+                      className={`p-1.5 rounded-full border transition-all shadow-lg flex items-center gap-2 px-3 ${
+                          remoteSync.status === 'connected' 
+                              ? 'bg-emerald-600/90 text-white border-emerald-500 hover:bg-emerald-500' 
+                              : 'bg-slate-800/80 text-indigo-400 border-slate-600 hover:border-indigo-500'
+                      }`}
+                  >
+                      <Wifi className="w-4 h-4" />
+                      {remoteSync.status === 'connected' && <span className="text-xs font-bold uppercase">{remoteSync.role === 'master' ? `Master (${remoteSync.clientCount})` : 'Slave'}</span>}
+                  </button>
+                  {remoteSync.status === 'connected' && (
+                      <button 
+                          onClick={handleStartCall}
+                          className={`p-2 rounded-full border transition-all shadow-lg flex items-center justify-center ${
+                              callStatus === 'ringing'
+                                  ? 'bg-amber-500 text-white border-amber-400 animate-pulse ring-4 ring-amber-500/30'
+                                  : callStatus === 'calling'
+                                      ? 'bg-emerald-600 text-white border-emerald-500 animate-pulse'
+                                      : callStatus === 'connected'
+                                          ? 'bg-emerald-500 text-white border-emerald-400'
+                                          : 'bg-white text-slate-900 border-slate-300 hover:bg-slate-100'
+                          }`}
+                          title={callStatus === 'ringing' ? t.call_answer : t.chat_title}
+                      >
+                          {callStatus === 'ringing' ? <PhoneIncoming className="w-5 h-5" /> : (callStatus === 'calling' ? <PhoneCall className="w-5 h-5" /> : <Phone className="w-5 h-5" />)}
+                      </button>
+                  )}
+              </div>
+          )}
       </div>
 
       <ConfirmModal isOpen={confirmModal.isOpen} title={confirmModal.title} message={confirmModal.message} confirmText={confirmModal.confirmText} cancelText={confirmModal.cancelText} onConfirm={confirmModal.action} onCancel={() => setConfirmModal(prev => ({...prev, isOpen: false}))} />
@@ -1665,7 +1739,21 @@ const App: React.FC = () => {
       <RawEditorModal isOpen={rawEditorOpen} initialContent={playlistActions.generatePlaylistContent()} onSave={handleRawSaveRequest} onClose={() => setRawEditorOpen(false)} t={t} />
       <RawEditorModal isOpen={logViewerOpen} initialContent={logContent} onSave={() => {}} onClose={() => setLogViewerOpen(false)} t={t} readOnly={true} title="File log della playlist" /> 
       <NetworkModal isOpen={networkModalOpen} onClose={() => setNetworkModalOpen(false)} sync={remoteSync} t={t} clientPin={clientPin} onChangeClientPin={(val) => { setClientPin(val); saveSettings({ clientPin: val }); }} serverPin={serverPin} clientName={clientName} songs={playlistState.songs} sfx={playlistState.sfxItems} masterFilePath={remoteSyncPath} onAssetsUpdated={handleReloadAssets} /> 
-      
+      <RenameModal 
+          isOpen={renameModal.isOpen}
+          initialValue={renameModal.name}
+          onClose={() => setRenameModal(prev => ({...prev, isOpen: false}))}
+          onSave={(val) => {
+              if (renameModal.index !== -1) {
+                  // Se sono in modalità Slave, dovrei mandare il comando al master, 
+                  // ma l'UI generalmente blocca questa interazione.
+                  // Se invece sono Master, aggiorno localmente:
+                  playlistActions.updateSong(renameModal.index, s => ({...s, title: val}));
+              }
+          }}
+          t={t}
+      />
+
       {/* ADDED MISSING MODALS TO MAIN VIEW */}
       <InfoModal isOpen={infoModalOpen} onClose={() => setInfoModalOpen(false)} t={t} appVersion={APP_VERSION} />
       <SettingsModal 

@@ -8,31 +8,32 @@ interface PlaylistViewProps {
   currentIndex: number;
   isPlaying: boolean;
   onSongSelect: (index: number) => void;
-  // onPlayPause rimosso dall'uso diretto nelle righe, usato solo per controlli globali se necessario
   onLoadNew: () => void;
   onLoadSingle: (file: File) => void;
-  onAddTrack: () => void; // Changed: No longer accepts file, just triggers picker
+  onAddTrack: () => void; 
   onReorder: (fromIndex: number, toIndex: number) => void; 
-  onDeleteSong: (index: number) => void; // New Prop
+  onDeleteSong: (index: number) => void; 
   appMode: AppMode;
-  onRequestModeChange: () => void; // Changed from setAppMode
+  onRequestModeChange: () => void; 
   playedSongIds: Set<string>;
-  onRequestReset: () => void; // Changed from onResetPlayed
-  onSavePlaylist: () => void; // RIPRISTINATO NOME UNICO PER IL SALVATAGGIO
+  onRequestReset: () => void; 
+  onSavePlaylist: () => void; 
   showWaveform: boolean;
   onToggleWaveform: () => void;
   onOpenRawEditor: () => void;
-  onOpenInfo: () => void; // NEW PROP
-  onRelink: (index: number) => void; // NEW PROP FOR RELINKING
+  onOpenInfo: () => void; 
+  onRelink: (index: number) => void; 
   language?: Language;
-  onLanguageRequest?: () => void; // NEW PROP to trigger language selector
-  playlistFileName?: string; // NEW PROP for displaying filename
-  isCompactView?: boolean; // NEW PROP for Compact Mode State
-  onToggleCompactView?: () => void; // NEW PROP for Compact Mode Toggle
-  appVersion?: string; // NEW PROP: App Version String
-  isAndroid?: boolean; // NEW PROP: Platform check
-  onOpenLog?: () => void; // NEW PROP: Open Log Viewer
-  readOnly?: boolean; // NEW: Interaction Lock
+  onLanguageRequest?: () => void; 
+  playlistFileName?: string; 
+  isCompactView?: boolean; 
+  onToggleCompactView?: () => void; 
+  appVersion?: string; 
+  isAndroid?: boolean; 
+  onOpenLog?: () => void; 
+  readOnly?: boolean;
+  onRenameSong?: (index: number) => void;
+  hasUnsavedChanges?: boolean; // NEW PROP
 }
 
 // --- HELPER: Format Duration (MM:SS) ---
@@ -44,7 +45,6 @@ const formatDuration = (seconds: number) => {
 };
 
 // --- COMPONENT: Flag Icon (Visual Only) ---
-// Now accepts click handler from parent
 const FlagIcon: React.FC<{lang: Language, onClick: () => void}> = ({ lang, onClick }) => (
   <button 
     onClick={onClick}
@@ -77,7 +77,7 @@ const SongDuration: React.FC<{ song: Song, isMissing: boolean, errorText: string
         if (isMissing || !song.url) return;
         
         const audio = new Audio(song.url);
-        audio.preload = 'metadata'; // Load only metadata to get duration
+        audio.preload = 'metadata'; 
         
         const onLoadedMetadata = () => {
             const d = audio.duration;
@@ -91,7 +91,7 @@ const SongDuration: React.FC<{ song: Song, isMissing: boolean, errorText: string
 
         return () => {
             audio.removeEventListener('loadedmetadata', onLoadedMetadata);
-            audio.src = ''; // Clean up
+            audio.src = ''; 
         };
     }, [song.url, isMissing]);
 
@@ -144,7 +144,9 @@ const PlaylistView: React.FC<PlaylistViewProps> = ({
   appVersion,
   isAndroid = false,
   onOpenLog,
-  readOnly = false
+  readOnly = false,
+  onRenameSong,
+  hasUnsavedChanges
 }) => {
   const activeRef = useRef<HTMLButtonElement>(null);
   const t = translations[language];
@@ -160,20 +162,15 @@ const PlaylistView: React.FC<PlaylistViewProps> = ({
     let classes = "";
 
     if (isMissing) {
-        // Updated Missing Style: Hoverable to indicate interaction (relink)
         classes += 'border-red-900/50 bg-red-900/10 text-red-400 hover:bg-red-900/20 cursor-pointer ';
     } else {
         classes += 'border-transparent text-slate-300 ';
-        // In Editing: Hover effects allowed
         if (appMode === 'editing' && !readOnly) {
             classes += 'bg-slate-800/40 hover:bg-slate-800 hover:border-slate-700 cursor-pointer ';
         } else {
-            // In Live: Check if played (previous track)
             if (isPlayedLive) {
-                 // Light red background for played tracks in live mode
                  classes += 'bg-red-900/20 text-red-300/50 border-transparent cursor-default grayscale ';
             } else {
-                // In Live: No hover bg, cursor default (locked) for active/future
                 classes += 'bg-slate-800/20 cursor-default ';
             }
         }
@@ -193,29 +190,24 @@ const PlaylistView: React.FC<PlaylistViewProps> = ({
   };
 
   const handleRowClick = (index: number, isActive: boolean, isMissing: boolean) => {
-      if (readOnly) return; // Completely disabled
+      if (readOnly) return; 
 
       if (isMissing) {
-          // Trigger Relink Logic
           onRelink(index);
           return; 
       }
 
-      // LIVE MODE: Completely disable interaction via list
       if (appMode === 'presentation') {
           return;
       }
-      // EDITING MODE: Allow selection
       onSongSelect(index);
   };
 
   return (
     <div className={`flex flex-col h-full bg-slate-900/50 backdrop-blur-sm transition-colors duration-500 border-r border-slate-800 ${readOnly ? 'pointer-events-none' : ''}`}>
       
-      {/* HEADER: Mode Switch & Tools */}
+      {/* HEADER */}
       <div className="shrink-0 p-4 border-b border-slate-800 bg-slate-900/95 z-10 flex flex-col gap-2">
-        
-        {/* Top Row: Title + Mode Toggle OR SOLO CHAT BADGE */}
         <div className="flex items-center justify-between">
              <div className="flex items-center gap-2">
                  {readOnly ? (
@@ -239,7 +231,6 @@ const PlaylistView: React.FC<PlaylistViewProps> = ({
                             </span>
                          </button>
                          
-                         {/* RAW EDITOR BUTTON - ONLY EDITING */}
                          {appMode === 'editing' && (
                             <button
                                 onClick={onOpenRawEditor}
@@ -250,7 +241,6 @@ const PlaylistView: React.FC<PlaylistViewProps> = ({
                             </button>
                          )}
 
-                         {/* INFO BUTTON (EDITING ONLY) */}
                          {appMode === 'editing' && (
                             <button
                                 onClick={onOpenInfo}
@@ -261,7 +251,6 @@ const PlaylistView: React.FC<PlaylistViewProps> = ({
                             </button>
                          )}
 
-                         {/* COMPACT MODE BUTTON (LIVE ONLY) */}
                          {appMode === 'presentation' && onToggleCompactView && (
                             <button
                                 onClick={onToggleCompactView}
@@ -272,7 +261,6 @@ const PlaylistView: React.FC<PlaylistViewProps> = ({
                             </button>
                          )}
 
-                         {/* Version - Windows Only (MOVED HERE) */}
                          {!isAndroid && appVersion && (
                              <div className="text-[9px] font-bold text-slate-600 select-none shrink-0 ml-2 border border-slate-700/50 px-1.5 py-0.5 rounded">
                                  {appVersion}
@@ -296,7 +284,6 @@ const PlaylistView: React.FC<PlaylistViewProps> = ({
 
                  {!readOnly && appMode === 'editing' && songs.length > 0 && (
                     <>
-                         {/* LOG VIEWER BUTTON - ONLY IF AVAILABLE */}
                          {onOpenLog && (
                              <button
                                  onClick={onOpenLog}
@@ -307,10 +294,13 @@ const PlaylistView: React.FC<PlaylistViewProps> = ({
                              </button>
                          )}
 
-                        {/* SINGLE SAVE BUTTON */}
                         <button 
                             onClick={onSavePlaylist}
-                            className="flex items-center gap-1 px-3 py-1.5 text-xs font-bold uppercase text-emerald-400 hover:text-white bg-slate-800 hover:bg-emerald-600 rounded-lg transition-colors border border-slate-700 hover:border-emerald-500 shadow-lg"
+                            className={`flex items-center gap-1 px-3 py-1.5 text-xs font-bold uppercase transition-colors rounded-lg border shadow-sm
+                                ${hasUnsavedChanges 
+                                    ? 'bg-emerald-600 text-white border-emerald-500 hover:bg-emerald-500 animate-pulse shadow-emerald-900/20' 
+                                    : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700 hover:text-white hover:border-emerald-500' // Neutral default
+                                }`}
                             title={t.save_playlist}
                         >
                             <Save className="w-4 h-4" />
@@ -321,7 +311,6 @@ const PlaylistView: React.FC<PlaylistViewProps> = ({
              </div>
         </div>
 
-        {/* MIDDLE ROW: Playlist Filename Display */}
         <div className="flex items-center justify-between px-1">
             {playlistFileName ? (
                 <div className="text-[10px] font-mono text-slate-500 truncate select-all" title={playlistFileName}>
@@ -330,7 +319,6 @@ const PlaylistView: React.FC<PlaylistViewProps> = ({
             ) : <div />}
         </div>
 
-        {/* Bottom Row: Loaders (Only Visible in Editing Mode) */}
         <div className="flex items-center justify-between min-h-[32px]">
             <h2 className="text-sm font-semibold text-slate-500 flex items-center gap-2">
                 <Music2 className="w-4 h-4" />
@@ -344,7 +332,6 @@ const PlaylistView: React.FC<PlaylistViewProps> = ({
             </h2>
 
             <div className="flex gap-2 items-center">
-                {/* LOAD BUTTON - EDITING ONLY */}
                 {!readOnly && appMode === 'editing' && (
                     <button
                         onClick={onLoadNew}
@@ -356,7 +343,6 @@ const PlaylistView: React.FC<PlaylistViewProps> = ({
                     </button>
                 )}
 
-                {/* FLAG ICON - ALWAYS HERE (AFTER LOAD) */}
                 {onLanguageRequest && (
                     <div className="ml-1">
                             <FlagIcon lang={language} onClick={onLanguageRequest} />
@@ -369,15 +355,11 @@ const PlaylistView: React.FC<PlaylistViewProps> = ({
       {/* LIST */}
       <div className="flex-1 overflow-y-auto touch-pan-y overscroll-contain p-4 space-y-2 pb-4">
         {songs.map((song, index) => {
-          // CHECK IF FILE IS MISSING (url is effectively a filename, not a blob/http)
-          // FIX: Added 'file:' protocol check for Electron
           const isMissing = !song.url.startsWith('blob:') && !song.url.startsWith('http') && !song.url.startsWith('file:');
           
           const isActive = index === currentIndex;
-          // Logic for 'Played' in live mode: Any track before the current index
           const isPlayedLive = appMode === 'presentation' && index < currentIndex;
           
-          // BOOLEAN FIX: Force cast to boolean to avoid printing '0'
           const hasCuts = !!((song.trimStart && song.trimStart > 0) || (song.trimEnd && song.trimEnd > 0));
           const hasGain = song.customGain !== 1.0;
           const hasNote = !!song.note && song.note.trim().length > 0;
@@ -387,15 +369,13 @@ const PlaylistView: React.FC<PlaylistViewProps> = ({
               key={song.id}
               ref={isActive ? activeRef : null}
               onClick={() => handleRowClick(index, isActive, isMissing)}
-              disabled={isPlayedLive || readOnly} // Remove disabled for missing, handle in onClick
+              disabled={isPlayedLive || readOnly} 
               className={`w-full group flex items-center gap-4 p-4 rounded-xl transition-all duration-200 text-left border ${getRowStyles(index, isActive, isPlayedLive, isMissing)}`}
             >
-              {/* Index Column - CLICKABLE BADGE IN EDITING */}
               <div 
                 onClick={(e) => {
-                    // IF IN EDITING MODE: Click triggers RELINK (change file)
                     if (appMode === 'editing' && !readOnly) {
-                        e.stopPropagation(); // Stop row select
+                        e.stopPropagation(); 
                         onRelink(index);
                     }
                 }}
@@ -412,7 +392,6 @@ const PlaylistView: React.FC<PlaylistViewProps> = ({
                 {isMissing ? (
                     <Link2 className="w-5 h-5 animate-pulse" />
                 ) : isActive ? (
-                   // Show Activity/Music Icon if active, but NOT a button
                    <Disc className={`w-5 h-5 ${isPlaying ? 'animate-spin' : ''}`} />
                 ) : isPlayedLive ? (
                    <Check className="w-4 h-4" />
@@ -421,16 +400,24 @@ const PlaylistView: React.FC<PlaylistViewProps> = ({
                 )}
               </div>
               
-              {/* MIDDLE COLUMN: Title and Info + Status Icons */}
               <div className="flex-1 min-w-0">
                 <div className="flex items-baseline gap-2 overflow-hidden">
-                    <h3 className={`font-medium truncate ${isPlayedLive ? 'decoration-red-500/50 line-through' : ''}`}>
-                    {song.title}
+                    <h3 
+                        // DOUBLE CLICK RENAME HANDLER
+                        onDoubleClick={(e) => {
+                            if (appMode === 'editing' && !readOnly && onRenameSong) {
+                                e.stopPropagation();
+                                onRenameSong(index);
+                            }
+                        }}
+                        className={`font-medium truncate select-none ${isPlayedLive ? 'decoration-red-500/50 line-through' : ''} ${appMode === 'editing' && !readOnly ? 'cursor-text hover:text-emerald-400' : ''}`}
+                        title={appMode === 'editing' && !readOnly ? "Doppio click per rinominare" : ""}
+                    >
+                        {song.title}
                     </h3>
                     <SongDuration song={song} isMissing={isMissing} errorText={t.file_error} />
                 </div>
                 
-                {/* Filename + Status Icons Row */}
                 <div className="flex items-center justify-between mt-1 h-5">
                     {!isPlayedLive && !isMissing ? (
                         <p className={`text-xs truncate font-mono ${isActive ? 'opacity-80' : 'opacity-50'}`} title={song.path || song.originalFileName || song.url}>
@@ -445,7 +432,6 @@ const PlaylistView: React.FC<PlaylistViewProps> = ({
                         <span className="text-xs text-red-400/50 font-bold uppercase">{t.played_status}</span>
                     )}
 
-                    {/* MOVED STATUS ICONS HERE (Right aligned) */}
                     <div className="flex items-center gap-1.5 shrink-0 ml-2">
                         {!isMissing && hasGain && (
                             <div className={`flex items-center justify-center w-5 h-5 rounded bg-slate-900/50 border border-slate-700 ${isActive ? 'text-indigo-400' : 'text-slate-500'}`} title={`Gain: ${Math.round((song.customGain || 1)*100)}%`}>
@@ -471,11 +457,9 @@ const PlaylistView: React.FC<PlaylistViewProps> = ({
                 </div>
               </div>
               
-              {/* RIGHT COLUMN: Interaction Controls Only (Arrows + Trash) */}
               <div className="flex items-center gap-3 shrink-0 ml-2">
                   {appMode === 'editing' && !readOnly && (
                       <>
-                        {/* MOVE BUTTONS - STACKED LEFT OF TRASH */}
                         <div className="flex flex-col gap-1">
                             <button 
                                 onClick={(e) => { e.stopPropagation(); onReorder(index, index - 1); }}
@@ -495,7 +479,6 @@ const PlaylistView: React.FC<PlaylistViewProps> = ({
                             </button>
                         </div>
 
-                        {/* DELETE BUTTON */}
                         <button 
                             onClick={(e) => { e.stopPropagation(); onDeleteSong(index); }}
                             className="p-2 text-slate-600 hover:text-red-500 hover:bg-red-950/30 rounded-lg transition-colors"

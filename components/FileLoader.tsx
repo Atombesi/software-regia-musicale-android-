@@ -94,11 +94,15 @@ const FileLoader: React.FC<FileLoaderProps> = ({
   const [recentPlaylists, setRecentPlaylists] = useState<HistoryItem[]>([]);
 
   // 3. Helper per calcolare Fullname in tempo reale
-  const getFullname = () => {
-      // FIX: Use current state directly, avoiding AppGlobals which might hold stale/loaded paths
-      let p = currentPath;
+  const getFullname = (overridePath?: string) => {
+      // FIX: Use current state directly, avoiding AppGlobals
+      let p = overridePath || currentPath;
       let f = saveFileName;
       
+      // Safety check: if path is missing, try fallback to initialPath or AppGlobals
+      if (!p && initialPath) p = initialPath;
+      if (!p && AppGlobals.Playlistpath) p = AppGlobals.Playlistpath;
+
       // Normalizzazione visuale
       if (p) p = p.replace(/\\/g, '/');
       
@@ -123,11 +127,16 @@ const FileLoader: React.FC<FileLoaderProps> = ({
     // Sincronizzazione Rigorosa delle Variabili all'avvio
     if (defaultFileName) setSaveFileName(defaultFileName);
     
-    // FORCE UPDATE STATE FROM GLOBALS ON MOUNT IF IN SAVE MODE
-    if (saveMode) {
-        if (AppGlobals.Playlistpath) setCurrentPath(AppGlobals.Playlistpath);
-        // Only set default filename from globals if not provided by prop
-        if (AppGlobals.Playlistfilename && !defaultFileName) setSaveFileName(AppGlobals.Playlistfilename);
+    // FORCE INITIALIZATION OF PATH
+    if (initialPath) {
+        setCurrentPath(initialPath);
+    } else if (saveMode && AppGlobals.Playlistpath) {
+        setCurrentPath(AppGlobals.Playlistpath);
+    }
+
+    // Only set default filename from globals if not provided by prop
+    if (saveMode && AppGlobals.Playlistfilename && !defaultFileName) {
+        setSaveFileName(AppGlobals.Playlistfilename);
     }
 
     if (android) {
@@ -143,14 +152,12 @@ const FileLoader: React.FC<FileLoaderProps> = ({
         }
 
         if (initialPath && !initialPath.startsWith('blob:') && !initialPath.startsWith('http')) {
-             if (!AppGlobals.Playlistpath) {
-                setCurrentPath(initialPath);
-             }
+             // Path is already set above
              if (saveMode) {
                   setExplorerInitialized(true);
-                  loadAndroidDir(AppGlobals.Playlistpath || initialPath, Directory.ExternalStorage);
+                  loadAndroidDir(initialPath, Directory.ExternalStorage);
              }
-        } else if (!AppGlobals.Playlistpath) {
+        } else if (!AppGlobals.Playlistpath && !initialPath) {
             detectWindowsPath();
         }
     }
@@ -158,14 +165,12 @@ const FileLoader: React.FC<FileLoaderProps> = ({
     loadHistory();
   }, [pickerMode, saveMode]);
 
-  // Sync quando le prop cambiano (es. dopo un Load riuscito)
+  // Sync quando le prop cambiano
   useEffect(() => {
       if (initialPath && !initialPath.startsWith('blob:') && !initialPath.startsWith('http')) {
           setCurrentPath(initialPath);
-      } else if (!initialPath && !isAndroid && !AppGlobals.Playlistpath) {
-          detectWindowsPath();
       }
-  }, [initialPath, isAndroid]);
+  }, [initialPath]);
 
   useEffect(() => {
       // FIX: Aggiorna l'input manuale quando cambia il path, pulendo se Android
@@ -977,7 +982,9 @@ const FileLoader: React.FC<FileLoaderProps> = ({
           // Force join: Folder + / + Name
           fullPath = `${cleanP}${separator}${finalName}`;
       } else {
-          fullPath = getFullname(); // Desktop fallback
+          // Desktop Fallback: if currentPath is empty, check if we have a robust fallback from props
+          // This fixes the "Save" (overwrite) case where UI didn't refresh currentPath in time.
+          fullPath = getFullname(initialPath); 
       }
       
       onSave(finalName, fullPath, rootDirectory);

@@ -1,7 +1,38 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import { Song, SfxItem } from '../types';
 import { formatPathForSaving } from '../utils/platformUtils';
 import { Directory } from '@capacitor/filesystem';
+
+// Helper function to generate content string consistently
+const generateContentString = (songs: Song[], sfxItems: SfxItem[]) => {
+    let content = "";
+    songs.forEach(s => {
+        let path = s.path || s.originalFileName || s.url;
+        path = formatPathForSaving(path);
+        
+        // Rounding to 2 decimal places for cleaner files
+        const start = (s.trimStart || 0).toFixed(2);
+        const end = (s.trimEnd || 0).toFixed(2);
+        const gain = (s.customGain !== undefined ? s.customGain : 1.0).toFixed(2);
+        const fade = s.hasFadeOut ? '1' : '0';
+        
+        content += `${s.title};${path};${start};${end};${fade};${gain};${s.note || ''}\n`;
+    });
+    sfxItems.forEach((sfx, idx) => {
+        if (sfx && sfx.url) {
+           let path = sfx.path || sfx.originalFileName || sfx.url;
+           path = formatPathForSaving(path);
+           
+           const start = (sfx.trimStart || 0).toFixed(2);
+           const end = (sfx.trimEnd || 0).toFixed(2);
+           const gain = (sfx.customGain !== undefined ? sfx.customGain : 1.0).toFixed(2);
+           const fade = sfx.hasFadeOut ? '1' : '0';
+           
+           content += `SFX;${idx};${sfx.label};${path};${start};${end};${fade};${gain}\n`;
+        }
+    });
+    return content;
+};
 
 export const usePlaylistManager = () => {
     // --- STATE ---
@@ -16,6 +47,17 @@ export const usePlaylistManager = () => {
     const [sourceDirectory, setSourceDirectory] = useState<Directory | undefined>(undefined);
     const [isPlaylistLoaded, setIsPlaylistLoaded] = useState(false);
 
+    // Dirty state tracking (Snapshot of the file on disk)
+    const [savedContentSnapshot, setSavedContentSnapshot] = useState<string>("");
+
+    // Calculate current content string on every change
+    const currentContent = useMemo(() => {
+        return generateContentString(songs, sfxItems);
+    }, [songs, sfxItems]);
+
+    // Derived state: True if current state differs from the saved snapshot
+    const hasUnsavedChanges = currentContent !== savedContentSnapshot;
+
     // --- ACTIONS ---
 
     const loadPlaylist = useCallback((
@@ -23,7 +65,8 @@ export const usePlaylistManager = () => {
         newSfx: SfxItem[], 
         fileName?: string, 
         path?: string, 
-        directory?: Directory
+        directory?: Directory,
+        fromDisk: boolean = true // If true, updates the saved snapshot (reset dirty state)
     ) => {
         setSongs(newSongs);
         setSfxItems(newSfx);
@@ -34,8 +77,16 @@ export const usePlaylistManager = () => {
         if (path) setSourceFilePath(path);
         if (directory) setSourceDirectory(directory);
         
+        if (fromDisk) {
+            setSavedContentSnapshot(generateContentString(newSongs, newSfx));
+        }
+
         setIsPlaylistLoaded(true);
     }, []);
+
+    const markAsSaved = useCallback(() => {
+        setSavedContentSnapshot(generateContentString(songs, sfxItems));
+    }, [songs, sfxItems]);
 
     const resetShow = useCallback(() => {
         setPlayedSongIds(new Set());
@@ -123,24 +174,12 @@ export const usePlaylistManager = () => {
 
     // --- FILE GENERATION ---
     const generatePlaylistContent = useCallback(() => {
-        let content = "";
-        songs.forEach(s => {
-            let path = s.path || s.originalFileName || s.url;
-            path = formatPathForSaving(path);
-            content += `${s.title};${path};${s.trimStart || 0};${s.trimEnd || 0};${s.hasFadeOut ? '1' : '0'};${s.customGain || 1.0};${s.note || ''}\n`;
-        });
-        sfxItems.forEach((sfx, idx) => {
-            if (sfx && sfx.url) {
-               let path = sfx.path || sfx.originalFileName || sfx.url;
-               path = formatPathForSaving(path);
-               content += `SFX;${idx};${sfx.label};${path};${sfx.trimStart || 0};${sfx.trimEnd || 0};${sfx.hasFadeOut ? '1' : '0'};${sfx.customGain || 1.0}\n`;
-            }
-        });
-        return content;
+        return generateContentString(songs, sfxItems);
     }, [songs, sfxItems]);
 
     const clearPlaylist = useCallback(() => {
         setSongs([]);
+        setSavedContentSnapshot(""); 
         setIsPlaylistLoaded(false);
     }, []);
 
@@ -153,7 +192,8 @@ export const usePlaylistManager = () => {
             sourceFileName,
             sourceFilePath,
             sourceDirectory,
-            isPlaylistLoaded
+            isPlaylistLoaded,
+            hasUnsavedChanges // Expose dirty state
         },
         actions: {
             loadPlaylist,
@@ -169,9 +209,10 @@ export const usePlaylistManager = () => {
             markAsPlayed,
             generatePlaylistContent,
             clearPlaylist,
-            setSourceFileName, // Exposed for Rename/Save As
+            setSourceFileName, 
             setSourceFilePath,
-            setSourceDirectory
+            setSourceDirectory,
+            markAsSaved // Expose save action
         }
     };
 };
