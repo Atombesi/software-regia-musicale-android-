@@ -118,6 +118,32 @@ export const writeWindowsTextFile = async (basePath: string, fileName: string, c
 };
 
 /**
+ * Gestisce la scrittura di file binari su Windows (es. Assets scaricati).
+ * Richiede implementazione lato Electron per decodificare base64.
+ */
+export const writeWindowsBinaryFile = async (fullPath: string, base64Data: string): Promise<void> => {
+    // Pulizia path
+    let path = fullPath;
+    if (path.startsWith('file:///')) path = path.substring(8);
+    else if (path.startsWith('file://')) path = path.substring(7);
+    path = path.replace(/\\/g, '/'); // Normalize slashes for JS handling, Electron handles OS specific
+
+    try { path = decodeURIComponent(path); } catch (e) {}
+
+    const electron = (window as any).electronAPI;
+    if (electron && electron.writeBinary) {
+        try {
+            await electron.writeBinary(path, base64Data);
+        } catch (e) {
+            console.error("Electron Binary Write Error:", e);
+            throw e;
+        }
+    } else {
+        throw new Error("Salvataggio binario non supportato in questo ambiente (manca Electron bridge).");
+    }
+};
+
+/**
  * Gestisce la lettura di file di testo su Windows.
  * Usa electronAPI se disponibile (Accesso disco reale).
  */

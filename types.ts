@@ -1,7 +1,9 @@
+
 export interface Song {
   id: string;
   title: string;
   url: string;
+  type?: 'audio' | 'separator'; // NEW: Distinguish audio from visual separators
   artist?: string;
   originalFileName?: string; // New field to store actual filename for export
   path?: string; // New field to store the full path/string from the playlist file

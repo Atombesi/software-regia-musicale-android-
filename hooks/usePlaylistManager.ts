@@ -1,3 +1,4 @@
+
 import { useState, useCallback, useMemo } from 'react';
 import { Song, SfxItem } from '../types';
 import { formatPathForSaving } from '../utils/platformUtils';
@@ -6,18 +7,36 @@ import { Directory } from '@capacitor/filesystem';
 // Helper function to generate content string consistently
 const generateContentString = (songs: Song[], sfxItems: SfxItem[]) => {
     let content = "";
-    songs.forEach(s => {
-        let path = s.path || s.originalFileName || s.url;
-        path = formatPathForSaving(path);
-        
-        // Rounding to 2 decimal places for cleaner files
-        const start = (s.trimStart || 0).toFixed(2);
-        const end = (s.trimEnd || 0).toFixed(2);
-        const gain = (s.customGain !== undefined ? s.customGain : 1.0).toFixed(2);
-        const fade = s.hasFadeOut ? '1' : '0';
-        
-        content += `${s.title};${path};${start};${end};${fade};${gain};${s.note || ''}\n`;
+    let notesSection = "";
+
+    songs.forEach((s, index) => {
+        if (s.type === 'separator') {
+            // New Format for Separator: SEPARATOR;Title
+            content += `SEPARATOR;${s.title}\n`;
+        } else {
+            let path = s.path || s.originalFileName || s.url;
+            path = formatPathForSaving(path);
+            
+            // Rounding to 2 decimal places for cleaner files
+            const start = (s.trimStart || 0).toFixed(2);
+            const end = (s.trimEnd || 0).toFixed(2);
+            const gain = (s.customGain !== undefined ? s.customGain : 1.0).toFixed(2);
+            const fade = s.hasFadeOut ? '1' : '0';
+            
+            // Handle Notes: If note exists, put a pointer [NOTE_N] in the CSV and append text at bottom
+            let noteField = "";
+            if (s.note && s.note.trim().length > 0) {
+                const notePointer = `[NOTE_${index}]`;
+                noteField = notePointer;
+                
+                // Append to notes section
+                notesSection += `\n${notePointer}\n${s.note}\n`;
+            }
+
+            content += `${s.title};${path};${start};${end};${fade};${gain};${noteField}\n`;
+        }
     });
+
     sfxItems.forEach((sfx, idx) => {
         if (sfx && sfx.url) {
            let path = sfx.path || sfx.originalFileName || sfx.url;
@@ -31,6 +50,12 @@ const generateContentString = (songs: Song[], sfxItems: SfxItem[]) => {
            content += `SFX;${idx};${sfx.label};${path};${start};${end};${fade};${gain}\n`;
         }
     });
+
+    // Append Notes Section at the end of file
+    if (notesSection) {
+        content += notesSection;
+    }
+
     return content;
 };
 
@@ -70,7 +95,14 @@ export const usePlaylistManager = () => {
     ) => {
         setSongs(newSongs);
         setSfxItems(newSfx);
-        setCurrentIndex(0);
+        
+        // Find first actual song (skip separators at start if any)
+        let firstIndex = 0;
+        while(firstIndex < newSongs.length && newSongs[firstIndex].type === 'separator') {
+            firstIndex++;
+        }
+        setCurrentIndex(firstIndex < newSongs.length ? firstIndex : 0);
+        
         setPlayedSongIds(new Set());
         
         if (fileName) setSourceFileName(fileName);
@@ -90,8 +122,13 @@ export const usePlaylistManager = () => {
 
     const resetShow = useCallback(() => {
         setPlayedSongIds(new Set());
-        setCurrentIndex(0);
-    }, []);
+        // Find first actual song
+        let firstIndex = 0;
+        while(firstIndex < songs.length && songs[firstIndex].type === 'separator') {
+            firstIndex++;
+        }
+        setCurrentIndex(firstIndex < songs.length ? firstIndex : 0);
+    }, [songs]);
 
     const addSong = useCallback((song: Song) => {
         setSongs(prev => [...prev, song]);
@@ -148,25 +185,42 @@ export const usePlaylistManager = () => {
     }, []);
 
     const nextSong = useCallback(() => {
-        if (currentIndex < songs.length - 1) {
-            setCurrentIndex(prev => prev + 1);
+        let nextIndex = currentIndex + 1;
+        
+        // Skip Separators
+        while (nextIndex < songs.length && songs[nextIndex].type === 'separator') {
+            nextIndex++;
+        }
+
+        if (nextIndex < songs.length) {
+            setCurrentIndex(nextIndex);
             return true;
         }
-        // Allow going to "End of show" (index == length)
-        if (currentIndex === songs.length - 1) {
-             setCurrentIndex(prev => prev + 1);
+        
+        // End of show logic
+        // If we are at the last audio song, we can technically go to "End"
+        if (currentIndex < songs.length && nextIndex >= songs.length) {
+             setCurrentIndex(songs.length); // End state
              return true;
         }
+        
         return false;
-    }, [currentIndex, songs.length]);
+    }, [currentIndex, songs]);
 
     const prevSong = useCallback(() => {
-        if (currentIndex > 0) {
-            setCurrentIndex(prev => prev - 1);
+        let prevIndex = currentIndex - 1;
+
+        // Skip Separators going backwards
+        while (prevIndex >= 0 && songs[prevIndex].type === 'separator') {
+            prevIndex--;
+        }
+
+        if (prevIndex >= 0) {
+            setCurrentIndex(prevIndex);
             return true;
         }
         return false;
-    }, [currentIndex]);
+    }, [currentIndex, songs]);
 
     const markAsPlayed = useCallback((id: string) => {
         setPlayedSongIds(prev => new Set(prev).add(id));

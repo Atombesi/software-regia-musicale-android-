@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef } from 'react';
 import { AlertCircle, FolderOpen, FileText, Monitor, ChevronRight, Folder, Music, AlertTriangle, ArrowUpCircle, FilePlus, Info, X, Save, AlertOctagon, History, Clock, MapPin, Database, Trash, CheckCircle2, LogOut, FileSignature, FolderSearch, ArrowLeft, HardDrive, Settings, Star, Plus, Trash2 } from 'lucide-react';
 import { Song, SfxItem, Language } from '../types';
@@ -21,6 +22,7 @@ interface FileLoaderProps {
   defaultFileName?: string;
   onSave?: (fileName: string, fullPath: string, directory: Directory) => void;
   onSettingsRequest?: () => void; 
+  appVersion?: string; // NEW PROP
 }
 
 interface Bookmark {
@@ -40,7 +42,8 @@ const FileLoader: React.FC<FileLoaderProps> = ({
     saveMode = false,
     defaultFileName = '',
     onSave,
-    onSettingsRequest
+    onSettingsRequest,
+    appVersion
 }) => {
   const [error, setError] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -428,46 +431,100 @@ const FileLoader: React.FC<FileLoaderProps> = ({
   };
 
   const parsePlaylistContent = (content: string): { songs: Song[], sfx: SfxItem[] } => {
+      // 1. Separate Lines from "Notes Section"
+      // New format uses [NOTE_ID] as separator at the end of the file.
+      // We process the file line by line. If we hit a [NOTE_...] block, we read until next block.
+      
       const lines = content.split('\n');
       const songs: Song[] = [];
       const sfx: SfxItem[] = new Array(6).fill(undefined);
+      const noteMap: { [key: string]: string } = {};
 
-      lines.forEach((line, index) => {
-          if (!line.trim()) return;
-          const parts = line.split(';');
+      let currentNoteKey: string | null = null;
+
+      // First pass: Logic to handle both CSV lines and Note Sections
+      for (let i = 0; i < lines.length; i++) {
+          const line = lines[i].trim();
+          if (!line && !currentNoteKey) continue; // Skip empty lines unless inside a note
+
+          // Check if it's a Note Header [NOTE_...]
+          const noteHeaderMatch = line.match(/^\[NOTE_(\d+)\]$/);
           
-          if (parts[0] === 'SFX') {
-              const idx = parseInt(parts[1]);
-              if (!isNaN(idx) && idx >= 0 && idx < 6) {
-                  sfx[idx] = {
-                      id: `sfx-${Date.now()}-${idx}`,
-                      label: parts[2],
-                      url: parts[3],
-                      path: parts[3], 
-                      originalFileName: extractFileName(parts[3]),
-                      trimStart: parseFloat(parts[4]) || 0,
-                      trimEnd: parseFloat(parts[5]) || 0,
-                      hasFadeOut: parts[6] === '1',
-                      customGain: parseFloat(parts[7]) || 1.0
-                  };
-              }
+          if (noteHeaderMatch) {
+              currentNoteKey = noteHeaderMatch[0]; // [NOTE_1]
+              noteMap[currentNoteKey] = ""; // Initialize
+              continue;
+          }
+
+          if (currentNoteKey) {
+              // We are reading a note body
+              // If we hit another header or end of file logic (not really needed if we just check header regex)
+              // Append to current note
+              noteMap[currentNoteKey] += lines[i] + "\n"; // Use original line to preserve indentation/spaces if needed
           } else {
-              if (parts.length >= 2) {
-                   songs.push({
-                      id: `song-${Date.now()}-${index}`,
-                      title: parts[0],
-                      url: parts[1],
-                      path: parts[1], 
-                      originalFileName: extractFileName(parts[1]),
-                      trimStart: parseFloat(parts[2]) || 0,
-                      trimEnd: parseFloat(parts[3]) || 0,
-                      hasFadeOut: parts[4] === '1',
-                      customGain: parseFloat(parts[5]) || 1.0,
-                      note: parts[6] || ''
-                   });
+              // It's a CSV line (Song or SFX or Separator)
+              const parts = line.split(';');
+              
+              if (parts[0] === 'SFX') {
+                  const idx = parseInt(parts[1]);
+                  if (!isNaN(idx) && idx >= 0 && idx < 6) {
+                      sfx[idx] = {
+                          id: `sfx-${Date.now()}-${idx}`,
+                          label: parts[2],
+                          url: parts[3],
+                          path: parts[3], 
+                          originalFileName: extractFileName(parts[3]),
+                          trimStart: parseFloat(parts[4]) || 0,
+                          trimEnd: parseFloat(parts[5]) || 0,
+                          hasFadeOut: parts[6] === '1',
+                          customGain: parseFloat(parts[7]) || 1.0
+                      };
+                  }
+              } else if (parts[0] === 'SEPARATOR') {
+                 songs.push({
+                      id: `sep-${Date.now()}-${i}`,
+                      title: parts[1],
+                      url: '',
+                      type: 'separator',
+                      path: '',
+                      originalFileName: ''
+                 });
+              } else {
+                  // Standard Song Line
+                  if (parts.length >= 2) {
+                       // Check if the Note part (index 6) is a pointer [NOTE_...]
+                       let rawNote = parts[6] || '';
+                       // Pointer detection handled in post-processing or here?
+                       // We'll store rawNote for now.
+                       
+                       songs.push({
+                          id: `song-${Date.now()}-${i}`,
+                          title: parts[0],
+                          url: parts[1],
+                          path: parts[1], 
+                          type: 'audio',
+                          originalFileName: extractFileName(parts[1]),
+                          trimStart: parseFloat(parts[2]) || 0,
+                          trimEnd: parseFloat(parts[3]) || 0,
+                          hasFadeOut: parts[4] === '1',
+                          customGain: parseFloat(parts[5]) || 1.0,
+                          note: rawNote // Temporary, might be a pointer
+                       });
+                  }
+              }
+          }
+      }
+
+      // Second pass: Resolve Note Pointers in Songs
+      songs.forEach(song => {
+          if (song.note && song.note.startsWith('[NOTE_') && song.note.endsWith(']')) {
+              const pointer = song.note;
+              if (noteMap[pointer]) {
+                  song.note = noteMap[pointer].trim(); // Replace pointer with full text
               }
           }
       });
+
       return { songs, sfx };
   };
 
@@ -539,10 +596,13 @@ const FileLoader: React.FC<FileLoaderProps> = ({
             }
       };
 
-      const resolvedSongs = await Promise.all(parsed.songs.map(async s => ({
-          ...s,
-          url: await resolvePath(s.path || s.url) || s.url 
-      })));
+      const resolvedSongs = await Promise.all(parsed.songs.map(async s => {
+          if (s.type === 'separator') return s; // Skip separators
+          return {
+              ...s,
+              url: await resolvePath(s.path || s.url) || s.url 
+          };
+      }));
 
       const resolvedSfx = await Promise.all(parsed.sfx.map(async s => {
           if (!s) return s;
@@ -564,8 +624,13 @@ const FileLoader: React.FC<FileLoaderProps> = ({
       const { resolvedSongs, resolvedSfx } = await resolvePathsForLoad(parsed, playlistDir, directory);
       
       // 2. Check if first song exists
-      const firstSong = resolvedSongs[0];
-      const isValid = firstSong && (firstSong.url.startsWith('blob:') || firstSong.url.startsWith('http') || firstSong.url.startsWith('file:'));
+      // Skip separators when checking for validity
+      const firstAudioSong = resolvedSongs.find(s => s.type !== 'separator');
+      
+      let isValid = true;
+      if (firstAudioSong) {
+          isValid = firstAudioSong.url.startsWith('blob:') || firstAudioSong.url.startsWith('http') || firstAudioSong.url.startsWith('file:');
+      }
       
       if (!isValid && resolvedSongs.length > 0) {
           // 3. First song missing: Trigger Smart Relink Modal
@@ -612,10 +677,13 @@ const FileLoader: React.FC<FileLoaderProps> = ({
       console.log("Smart Relink: New Base Dir detected:", newDir);
 
       // 2. Update Paths in Parsed Data
-      const updatedSongs = pendingRelink.parsed.songs.map((s: Song) => ({
-          ...s,
-          path: newDir ? `${newDir}/${s.originalFileName || extractFileName(s.path || "")}` : s.originalFileName
-      }));
+      const updatedSongs = pendingRelink.parsed.songs.map((s: Song) => {
+          if (s.type === 'separator') return s;
+          return {
+              ...s,
+              path: newDir ? `${newDir}/${s.originalFileName || extractFileName(s.path || "")}` : s.originalFileName
+          };
+      });
 
       const updatedSfx = pendingRelink.parsed.sfx.map((s: SfxItem) => {
           if (!s) return s;
@@ -946,6 +1014,7 @@ const FileLoader: React.FC<FileLoaderProps> = ({
                           id: `auto-${i}`, 
                           title: removeExtension(f.name), 
                           url: url, 
+                          type: 'audio',
                           path: electronPath || f.name, 
                           originalFileName: f.name 
                       };
@@ -1267,8 +1336,10 @@ const FileLoader: React.FC<FileLoaderProps> = ({
             accept={pickerMode || relinkMode ? "audio/*,.mp3,.wav,.ogg,.m4a" : ".txt,.mp3,.wav,.ogg,.m4a,.flac"}
             className="hidden" 
         />
-
-        {/* ... Modals (DEBUG, FIX, ERROR, CONFIRM) ... */}
+        {/* ... (Existing code for Modals remains unchanged but is omitted here for brevity as it was not changed) ... */}
+        {/* Modals are unchanged */}
+        
+        {/* DEBUG MODAL */}
         {debugModal.isOpen && (
             <div className="absolute inset-0 z-[100] bg-black/90 flex items-center justify-center p-6 animate-in fade-in duration-200">
                 <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 max-w-2xl w-full flex flex-col max-h-[90vh]">
@@ -1298,7 +1369,6 @@ const FileLoader: React.FC<FileLoaderProps> = ({
                 </div>
             </div>
         )}
-
         {/* PENDING RELINK MODAL */}
         {pendingRelink && (
             <div className="absolute inset-0 z-[150] bg-black/90 flex items-center justify-center p-6 animate-in fade-in duration-200">
@@ -1353,8 +1423,7 @@ const FileLoader: React.FC<FileLoaderProps> = ({
                 </div>
             </div>
         )}
-
-        {/* PATH FIX MODAL (Legacy/Other use) */}
+        {/* CONFIRM/ERROR MODALS... */}
         {pathFixModal.isOpen && (
             <div className="absolute inset-0 z-50 bg-black/80 flex items-center justify-center p-6 animate-in fade-in duration-200">
                 <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 max-w-sm w-full text-center shadow-2xl">
@@ -1538,6 +1607,7 @@ const FileLoader: React.FC<FileLoaderProps> = ({
                     <h1 className="text-3xl md:text-4xl font-black text-white tracking-tight leading-none mb-1">Regia Musiche <span className="text-emerald-500">Attozero</span></h1>
                     <p className="text-slate-400 text-sm md:text-base">
                         {pickerMode || relinkMode ? t.select_audio_title : t.select_playlist_title}
+                        {appVersion && !pickerMode && !relinkMode && <span className="opacity-50 ml-1">({appVersion})</span>}
                     </p>
                 </div>
             </div>

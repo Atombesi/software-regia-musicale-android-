@@ -1,6 +1,7 @@
+
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import App from './App';
+import App from './App'; // UPDATED: Point to the new App structure
 import './index.css';
 
 const rootElement = document.getElementById('root');

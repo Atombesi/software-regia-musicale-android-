@@ -4,6 +4,7 @@ import FileLoader from './components/FileLoader';
 import PlaylistView from './components/PlaylistView';
 import PlayerControls from './components/PlayerControls';
 import Waveform from './components/Waveform';
+import NotesPanel from './components/NotesPanel';
 import { Scissors, Zap, Wind, MapPin, Save, RefreshCcw, Plus, Minus, PlayCircle, PauseCircle, StickyNote, Edit2, X, Pause, SignalHigh, GripVertical, Wifi, Phone, PhoneCall, PhoneIncoming, Send } from 'lucide-react';
 import { Capacitor } from '@capacitor/core';
 import { Filesystem, Directory, Encoding, FileInfo } from '@capacitor/filesystem';
@@ -38,7 +39,7 @@ import NetworkModal from './components/modals/NetworkModal';
 import ChatModal from './components/modals/ChatModal'; 
 import RenameModal from './components/modals/RenameModal';
 
-export const APP_VERSION = "Ver 2.6.2";
+export const APP_VERSION = "Ver 2.6.6";
 
 const App: React.FC = () => {
   // LANGUAGE STATE
@@ -159,7 +160,12 @@ const App: React.FC = () => {
 
   // --- LOG FILE EXISTENCE STATE ---
   const [logFileExists, setLogFileExists] = useState(false);
+  
+  // --- TIMER STATE ---
   const showStartTimeRef = useRef<number | null>(null);
+  const [showStartTime, setShowStartTime] = useState<number | null>(null); // State synced with ref for UI
+  const [showEndTime, setShowEndTime] = useState<number | null>(null);
+  
   const trackStartTimeRef = useRef<number | null>(null);
 
   const checkLogFileExistence = async () => {
@@ -236,7 +242,7 @@ const App: React.FC = () => {
       ? playlistState.sfxItems[editingSfxIndex] 
       : playlistState.songs[playlistState.currentIndex];
       
-  const hasTarget = !!editingTarget && !!editingTarget.url;
+  const hasTarget = !!editingTarget && (!!editingTarget.url || (editingTarget as Song).type === 'separator');
 
   // ===========================================================================
   //  CHAT & CALL LOGIC
@@ -247,6 +253,11 @@ const App: React.FC = () => {
   const [chatMessages, setChatMessages] = useState<{ text: string, sender?: string, isMe: boolean, time: number }[]>([]);
   const callTimerRef = useRef<any>(null);
   const ringIntervalRef = useRef<any>(null);
+
+  // ===========================================================================
+  //  NOTES PINNING LOGIC
+  // ===========================================================================
+  const [notesPinned, setNotesPinned] = useState(false);
 
   const playPhoneRing = () => {
      if (!enableBeep) return;
@@ -317,6 +328,9 @@ const App: React.FC = () => {
                    const m = Math.floor((totalMs % 3600000) / 60000);
                    const s = Math.floor((totalMs % 60000) / 1000);
                    logEvent("termine Scaletta-Fine spettacolo", `Durata totale: [${h}:${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}]`);
+                   
+                   // FREEZE TIMER
+                   setShowEndTime(Date.now());
               } else {
                    logEvent("termine Scaletta-Fine spettacolo", "");
               }
@@ -341,10 +355,15 @@ const App: React.FC = () => {
   });
 
   const performPlay = useCallback((source: 'local' | 'remote' = 'local') => {
-      if (hasTarget) {
+      if (hasTarget && (editingTarget as Song).type !== 'separator') {
           if (appMode === 'presentation' && editingSfxIndex === null) {
                if (playlistState.currentIndex === 0 && !showStartTimeRef.current) {
-                   showStartTimeRef.current = Date.now();
+                   const now = Date.now();
+                   showStartTimeRef.current = now;
+                   // START TIMER
+                   setShowStartTime(now);
+                   setShowEndTime(null);
+                   
                    logEvent("Inizio Spettacolo", "(Ho premuto play sulla prima traccia)", false, source === 'remote' ? "[client]" : "");
                }
                trackStartTimeRef.current = Date.now();
@@ -356,7 +375,7 @@ const App: React.FC = () => {
           setPlaybackSource('html5');
           audioControls.play();
       }
-  }, [hasTarget, appMode, editingSfxIndex, playlistState.currentIndex, playlistState.songs, logEvent, audioControls]);
+  }, [hasTarget, editingTarget, appMode, editingSfxIndex, playlistState.currentIndex, playlistState.songs, logEvent, audioControls]);
 
   const performPause = useCallback((source: 'local' | 'remote' = 'local') => {
       if (appMode === 'presentation' && editingSfxIndex === null) {
@@ -409,7 +428,12 @@ const App: React.FC = () => {
       playlistActions.resetShow();
       setEditingSfxIndex(null);
       audioControls.hardReset();
-      const firstSong = playlistState.songs[0];
+      
+      // FIX: Ensure reset handles separators correctly
+      // Find first non-separator song
+      const firstAudioIndex = playlistState.songs.findIndex(s => s.type !== 'separator');
+      const firstSong = firstAudioIndex >= 0 ? playlistState.songs[firstAudioIndex] : null;
+
       if(firstSong) {
           const resetVol = firstSong.customGain || 1.0;
           if (audioRef.current) {
@@ -420,7 +444,11 @@ const App: React.FC = () => {
           }
           audioControls.setVolume(resetVol);
       }
+      // RESET TIMER
       showStartTimeRef.current = null;
+      setShowStartTime(null);
+      setShowEndTime(null);
+      
       logEvent("Reset", "(Show Reset)", true, source === 'remote' ? "[client]" : "");
   }, [playlistActions, audioControls, playlistState.songs, logEvent]);
 
@@ -494,8 +522,26 @@ const App: React.FC = () => {
           performPause('remote');
       } else if (cmd.type === 'RESET') performReset('remote');
       else if (cmd.type === 'UPDATE_SONG') {
-          if (cmd.isSfx) playlistActions.updateSfx(cmd.index, cmd.data);
-          else playlistActions.updateSong(cmd.index, (s) => ({ ...s, ...cmd.data }));
+          // FIX BUG: Prevent Client URLs from corrupting Server Paths
+          if (cmd.isSfx) {
+              const oldItem = playlistState.sfxItems[cmd.index];
+              playlistActions.updateSfx(cmd.index, {
+                  ...cmd.data,
+                  // Keep server-side paths
+                  url: oldItem?.url || cmd.data.url,
+                  path: oldItem?.path || cmd.data.path,
+                  originalFileName: oldItem?.originalFileName || cmd.data.originalFileName
+              });
+          } else {
+              playlistActions.updateSong(cmd.index, (s) => ({ 
+                  ...s, 
+                  ...cmd.data,
+                  // Force keep server-side paths
+                  url: s.url,
+                  path: s.path,
+                  originalFileName: s.originalFileName
+              }));
+          }
       } else if (cmd.type === 'SAVE_PLAYLIST') {
           const content = playlistActions.generatePlaylistContent();
           const path = playlistState.sourceFilePath;
@@ -510,12 +556,15 @@ const App: React.FC = () => {
                    .catch(e => console.error("Silent save failed", e));
           }
       }
-  }, [performPlay, performPause, performStop, performNext, performPrev, performManualFade, performSfxPlay, performVolumeChange, playlistActions, logEvent, performReset, playlistState.sourceFilePath, playlistState.sourceFileName, playlistState.sourceDirectory]);
+  }, [performPlay, performPause, performStop, performNext, performPrev, performManualFade, performSfxPlay, performVolumeChange, playlistActions, logEvent, performReset, playlistState.sourceFilePath, playlistState.sourceFileName, playlistState.sourceDirectory, playlistState.sfxItems]);
 
   const checkAssetsForPlaylist = async (items: any[]) => {
       if (!isAndroid) return items;
       const processed = await Promise.all(items.map(async (item) => {
           if (!item) return item;
+          // Skip separators for asset checking
+          if (item.type === 'separator') return item;
+          
           if (item.originalFileName) {
               const localUri = await checkLocalAsset(item.originalFileName);
               if (localUri) return { ...item, url: localUri };
@@ -546,6 +595,33 @@ const App: React.FC = () => {
       if (state.appMode && state.appMode !== appMode) {
           setAppMode(state.appMode);
       }
+
+      // --- SYNC SHOW TIMER (SLAVE LOGIC) ---
+      if (state.showDuration !== undefined) {
+          if (state.showDuration !== null) {
+              // Show is running (or paused/ended). We receive "ElapsedTime".
+              // Calculate local start time to drive the local Timer interval
+              const derivedStart = Date.now() - state.showDuration;
+              
+              // Only update if unset or significantly drifted (>1s) to avoid jitter
+              if (!showStartTimeRef.current || Math.abs(showStartTimeRef.current - derivedStart) > 1000) {
+                  showStartTimeRef.current = derivedStart;
+                  setShowStartTime(derivedStart);
+              }
+
+              // Check if show ended (Freeze Timer)
+              if (state.isShowEnded) {
+                  setShowEndTime(Date.now()); // Sets local end time to freeze display
+              } else {
+                  setShowEndTime(null);
+              }
+          } else {
+              // Server sent reset (null)
+              showStartTimeRef.current = null;
+              setShowStartTime(null);
+              setShowEndTime(null);
+          }
+      }
   }, [audioControls, playlistActions, playlistState.currentIndex, appMode]);
 
   const handleRemoteChat = useCallback((type: string, payload?: any, sender?: string) => {
@@ -553,6 +629,9 @@ const App: React.FC = () => {
           if (callStatus === 'idle') {
               setCallStatus('ringing');
               setIsChatOpen(true);
+              // --- AUTO PIN LOGIC FOR DESKTOP ---
+              if (!isAndroid && notesPinned) setChatPinned(true);
+              
               clearCallTimer();
               callTimerRef.current = setTimeout(() => {
                   setCallStatus('idle');
@@ -564,6 +643,8 @@ const App: React.FC = () => {
           setCallStatus('connected');
           setIsChatOpen(true);
           // CHAT HISTORY IS NOW PERSISTED
+          // --- AUTO PIN LOGIC FOR DESKTOP ---
+          if (!isAndroid && notesPinned) setChatPinned(true);
       } else if (type === 'CHAT_CALL_END') {
           clearCallTimer();
           setCallStatus('idle');
@@ -571,12 +652,15 @@ const App: React.FC = () => {
       } else if (type === 'CHAT_CHAT_MSG') {
           if (callStatus === 'connected') {
               setIsChatOpen(true); 
+              // --- AUTO PIN LOGIC FOR DESKTOP ---
+              if (!isAndroid && notesPinned) setChatPinned(true);
+              
               if (payload) {
                   setChatMessages(prev => [...prev, { text: payload, isMe: false, sender: sender, time: Date.now() }]);
               }
           }
       }
-  }, [callStatus, callTimeout, chatPinned]);
+  }, [callStatus, callTimeout, chatPinned, notesPinned, isAndroid]);
 
   const remoteSync = useRemoteSync(
       handleRemoteCommand, 
@@ -593,20 +677,29 @@ const App: React.FC = () => {
       }
   }, [remoteSync.status]);
   
+  // --- MASTER BROADCAST LOOP ---
   useEffect(() => {
       if (remoteSync.role === 'master') {
           const interval = setInterval(() => {
+              // Calculate Duration to send to clients
+              const currentDuration = showStartTimeRef.current 
+                  ? (showEndTime || Date.now()) - showStartTimeRef.current 
+                  : null;
+
               remoteSync.broadcastState({
                   currentTime: playerState.currentTime,
                   isPlaying: playerState.isPlaying,
                   currentIndex: playlistState.currentIndex,
                   volume: playerState.volume, 
-                  appMode: appMode 
+                  appMode: appMode,
+                  // SYNC INFO
+                  showDuration: currentDuration,
+                  isShowEnded: !!showEndTime
               });
           }, 200); 
           return () => clearInterval(interval);
       }
-  }, [remoteSync.role, playerState.isPlaying, playerState.currentTime, playerState.volume, playlistState.currentIndex, appMode]);
+  }, [remoteSync.role, playerState.isPlaying, playerState.currentTime, playerState.volume, playlistState.currentIndex, appMode, showEndTime]);
 
   useEffect(() => {
       if (remoteSync.role === 'master' && remoteSync.clientCount > 0 && playlistState.songs.length > 0) {
@@ -618,6 +711,10 @@ const App: React.FC = () => {
       if (callStatus === 'idle') {
           setCallStatus('calling');
           setIsChatOpen(true); 
+          
+          // --- AUTO PIN LOGIC FOR DESKTOP ---
+          if (!isAndroid && notesPinned) setChatPinned(true);
+
           remoteSync.sendChatCommand('CALL_REQ');
           clearCallTimer();
           callTimerRef.current = setTimeout(() => {
@@ -639,8 +736,15 @@ const App: React.FC = () => {
   const handleEndCall = () => {
       clearCallTimer();
       setCallStatus('idle');
+      // If pinned, we might keep it open, but for now we close unless pinned logic is specific
       if (!chatPinned) setIsChatOpen(false);
       remoteSync.sendChatCommand('CALL_END');
+  };
+
+  // --- NEW: HANDLE LOCAL WINDOW CLOSE ---
+  const handleCloseChatWindow = () => {
+      setIsChatOpen(false);
+      // NOTE: This does NOT send a network command. It just hides the window locally.
   };
 
   const handleSendChatMessage = (text: string) => {
@@ -650,6 +754,28 @@ const App: React.FC = () => {
 
   // --- READ ONLY CHECK ---
   const isControlsDisabled = remoteSync.isReadOnly;
+
+  // --- RELOAD / REMAP ASSETS HANDLER ---
+  // UPDATED: Now accepts optional remapped lists for Windows Client Logic
+  const handleReloadAssets = (remappedSongs?: Song[], remappedSfx?: SfxItem[]) => {
+     if (remappedSongs || remappedSfx) {
+         // LOCAL REMAP MODE (WINDOWS)
+         // Directly update the playlist in memory with the new local paths
+         playlistActions.loadPlaylist(
+             remappedSongs || playlistState.songs, 
+             remappedSfx || playlistState.sfxItems, 
+             "Remote Playlist (Local)", 
+             undefined, 
+             undefined, 
+             true
+         );
+         // Keep app in presentation mode
+         setAppMode('presentation');
+     } else if (remoteSync.role === 'slave' && remoteMasterPath) {
+          // REMOTE RELOAD MODE (ANDROID/DEFAULT)
+          handleRemotePlaylist(playlistState.songs, playlistState.sfxItems, remoteMasterPath);
+     }
+  };
 
   const requestMainPlay = () => {
       if (isControlsDisabled) return; // BLOCKED
@@ -803,8 +929,12 @@ const App: React.FC = () => {
   const handlePlaylistLoaded = (newSongs: Song[], newSfx: SfxItem[], fileName?: string, path?: string, directory?: Directory, fromDisk: boolean = true) => {
     audioControls.hardReset();
     if (audioRef.current) audioRef.current.src = "";
+    // RESET TIMER ON LOAD
     showStartTimeRef.current = null;
+    setShowStartTime(null);
+    setShowEndTime(null);
     trackStartTimeRef.current = null;
+    
     setEditingSfxIndex(null); 
     if (path) {
          const norm = path.replace(/\\/g, '/');
@@ -830,12 +960,29 @@ const App: React.FC = () => {
   };
 
   const handleLoadSingle = (file: File) => {
-      const newSong: Song = { id: `manual-${Date.now()}`, title: removeExtension(file.name), url: URL.createObjectURL(file), artist: 'Manual Load', originalFileName: file.name };
+      const newSong: Song = { id: `manual-${Date.now()}`, title: removeExtension(file.name), url: URL.createObjectURL(file), artist: 'Manual Load', originalFileName: file.name, type: 'audio' };
       audioControls.hardReset();
       setEditingSfxIndex(null);
       playlistActions.loadPlaylist([newSong], new Array(6).fill(undefined), undefined, undefined, undefined, false); // Manual load = Dirty
       playlistActions.setSourceFilePath(null);
   };
+
+  // --- NEW SEPARATOR HANDLER ---
+  const handleAddSeparator = (label: string) => {
+      if (remoteSync.role === 'slave') return;
+      
+      const newSep: Song = {
+          id: `sep-${Date.now()}`,
+          title: label,
+          url: '',
+          type: 'separator',
+          path: '',
+          originalFileName: ''
+      };
+      
+      playlistActions.addSong(newSep);
+  };
+
 
   const handleOpenPicker = (target: 'track' | 'sfx' | 'relink', index?: number) => {
       if (remoteSync.role === 'slave') {
@@ -866,7 +1013,8 @@ const App: React.FC = () => {
               url: resolvedUrl, 
               path: fullPath,
               artist: 'Added Track', 
-              originalFileName: fileInfo.name 
+              originalFileName: fileInfo.name,
+              type: 'audio'
           };
           playlistActions.addSong(newSong);
       } else if (target === 'sfx' && index !== undefined) {
@@ -1199,6 +1347,16 @@ const App: React.FC = () => {
                     customGain: parseFloat(parts[7]) || 1.0
                 };
             }
+        } else if (parts[0] === 'SEPARATOR') {
+             // NEW: Handle SEPARATOR in Raw Editor
+             songs.push({
+                 id: `sep-${Date.now()}-${index}`,
+                 title: parts[1],
+                 url: '',
+                 type: 'separator',
+                 path: '',
+                 originalFileName: ''
+             });
         } else {
             if (parts.length >= 2) {
                  songs.push({
@@ -1207,6 +1365,7 @@ const App: React.FC = () => {
                     url: parts[1], // Raw path/url
                     path: parts[1], 
                     originalFileName: extractFileName(parts[1]),
+                    type: 'audio',
                     trimStart: parseFloat(parts[2]) || 0,
                     trimEnd: parseFloat(parts[3]) || 0,
                     hasFadeOut: parts[4] === '1',
@@ -1225,6 +1384,8 @@ const App: React.FC = () => {
      
      // 1. Merge Songs: Preserve URL (File Protocol) if path matches existing
      const mergedSongs = parsedSongs.map(newSong => {
+         if (newSong.type === 'separator') return newSong; // Separators don't need url merging
+
          const existing = playlistState.songs.find(old => {
              // Compare by path or filename (trim to be safe)
              const p1 = (old.path || "").trim();
@@ -1265,12 +1426,6 @@ const App: React.FC = () => {
      setRawEditorOpen(false);
   };
 
-  const handleReloadAssets = () => {
-     if (remoteSync.role === 'slave' && remoteMasterPath) {
-          handleRemotePlaylist(playlistState.songs, playlistState.sfxItems, remoteMasterPath);
-     }
-  };
-
   const remoteSyncPath = playlistState.sourceFilePath || undefined;
 
   // --- RENDER VARS ---
@@ -1280,6 +1435,10 @@ const App: React.FC = () => {
   const waveformHeightClass = showWaveform 
       ? (appMode === 'editing' ? 'h-32' : (isCompactView ? 'h-12' : 'h-20')) 
       : 'h-0 border-none';
+
+  // --- PINNED LOGIC FOR DESKTOP ---
+  const isPinnedDesktop = chatPinned && !isAndroid;
+  const isNotesPinnedDesktop = notesPinned && !isAndroid;
 
   if (!playlistState.isPlaylistLoaded) {
       return (
@@ -1292,6 +1451,7 @@ const App: React.FC = () => {
                     onPathChange={setLastExplorerPath}
                     language={language}
                     onSettingsRequest={() => setSettingsModalOpen(true)} 
+                    appVersion={APP_VERSION}
                 />
             </div>
             
@@ -1336,8 +1496,6 @@ const App: React.FC = () => {
       );
   }
 
-  const isPinnedDesktop = chatPinned && !isAndroid;
-
   return (
     <div className={`h-screen w-screen bg-black flex overflow-hidden relative transition-all duration-500
         ${isControlsDisabled ? 'ring-8 ring-inset ring-indigo-900/50 opacity-90' : ''}`}>
@@ -1366,9 +1524,9 @@ const App: React.FC = () => {
               </div>
           )}
 
-          <div className="flex-1 flex min-h-0 overflow-hidden relative" onMouseMove={(e) => !isPinnedDesktop && isDragging.current && handleDragMove(e.nativeEvent)} onMouseUp={handleDragEnd}>
+          <div className="flex-1 flex min-h-0 overflow-hidden relative" onMouseMove={(e) => (!isPinnedDesktop && !isNotesPinnedDesktop) && isDragging.current && handleDragMove(e.nativeEvent)} onMouseUp={handleDragEnd}>
               <div 
-                style={{ width: isPinnedDesktop ? '30%' : (appMode === 'editing' ? `${leftPanelWidth}%` : '40%') }} 
+                style={{ width: (isPinnedDesktop || isNotesPinnedDesktop) ? '30%' : (appMode === 'editing' ? `${leftPanelWidth}%` : '40%') }} 
                 className="flex flex-col border-r border-slate-800 relative z-10 bg-slate-900/50 min-w-[250px] transition-[width] duration-300 ease-in-out overflow-hidden"
               >
                 <PlaylistView 
@@ -1379,6 +1537,7 @@ const App: React.FC = () => {
                     onLoadNew={handleLoadNewRequest} 
                     onLoadSingle={handleLoadSingle}
                     onAddTrack={() => handleOpenPicker('track')} 
+                    onAddSeparator={handleAddSeparator} // PASS HANDLER
                     onReorder={playlistActions.reorderSongs}
                     onDeleteSong={handleDeleteSong}
                     appMode={appMode}
@@ -1402,10 +1561,20 @@ const App: React.FC = () => {
                     readOnly={isControlsDisabled} 
                     onRenameSong={(idx) => setRenameModal({isOpen: true, index: idx, name: playlistState.songs[idx].title})}
                     hasUnsavedChanges={playlistState.hasUnsavedChanges}
+                    // PASS TIMER PROPS
+                    showStartTime={showStartTime}
+                    showEndTime={showEndTime}
+                    // PIN NOTES PROPS
+                    onTogglePinNotes={() => {
+                        const newVal = !notesPinned;
+                        setNotesPinned(newVal);
+                        if (!newVal && !chatPinned) setLeftPanelWidth(40);
+                    }}
+                    isNotesPinned={notesPinned}
                 />
               </div>
 
-              {appMode === 'editing' && !isPinnedDesktop && (
+              {appMode === 'editing' && !isPinnedDesktop && !isNotesPinnedDesktop && (
                   <div
                       onMouseDown={handleDragStart}
                       onTouchStart={handleDragStart}
@@ -1635,9 +1804,10 @@ const App: React.FC = () => {
                     </div>
                 </div>
 
-                {editingSfxIndex === null && (appMode === 'presentation' || !isAndroid) && (
+                {/* --- BOTTOM NOTE PREVIEW (ONLY IF NOT PINNED) --- */}
+                {editingSfxIndex === null && !isNotesPinnedDesktop && (appMode === 'presentation' || !isAndroid) && (editingTarget as Song)?.type !== 'separator' && (
                     <div className="shrink-0 bg-slate-900 p-3 border-t border-slate-800">
-                        <div className={`flex items-start gap-3 ${isCompactView ? 'h-24' : 'h-16'}`}>
+                        <div className={`flex items-start gap-3 ${isCompactView ? 'h-24' : 'h-20'}`}>
                             <button 
                                 disabled={true}
                                 className="p-2 rounded-lg border border-amber-500/30 shrink-0 transition-all bg-amber-900/20 text-amber-400 cursor-default"
@@ -1645,12 +1815,12 @@ const App: React.FC = () => {
                                 <StickyNote className="w-5 h-5" />
                             </button>
                             <div className="flex-1 h-full">
-                                <div className={`w-full h-full rounded-lg p-2 text-sm font-bold flex items-center leading-tight overflow-hidden ${
+                                <div className={`w-full h-full rounded-lg p-2 text-sm font-bold leading-relaxed overflow-y-auto custom-scrollbar ${
                                     (editingTarget as Song)?.note 
                                     ? 'bg-amber-500/10 border border-amber-500/30 text-amber-200' 
                                     : 'bg-slate-800/50 border border-slate-800 text-slate-600 italic'
                                 }`}>
-                                    <span className={`${isCompactView ? 'line-clamp-3' : 'line-clamp-2'} whitespace-pre-wrap`}>
+                                    <span className="whitespace-pre-wrap">
                                         {(editingTarget as Song)?.note || t.no_note_placeholder}
                                     </span>
                                 </div>
@@ -1660,20 +1830,52 @@ const App: React.FC = () => {
                 )}
               </div>
 
-              {isPinnedDesktop && isChatOpen && (
+              {/* --- RIGHT COLUMN CONTAINER (CHAT & NOTES PINNED) --- */}
+              {(isPinnedDesktop || isNotesPinnedDesktop) && (
                   <div className="w-[25%] shrink-0 border-l border-slate-800 bg-slate-950 flex flex-col transition-all duration-300 ease-in-out">
-                      <ChatModal 
-                          isOpen={true} 
-                          messages={chatMessages}
-                          onSendMessage={handleSendChatMessage}
-                          onEndCall={handleEndCall}
-                          t={t}
-                          isPinned={chatPinned}
-                          onTogglePin={(val) => { setChatPinned(val); if(!val) setLeftPanelWidth(40); }} 
-                          displayMode="docked"
-                          connectedStatus={callStatus}
-                          onAnswerCall={handleAnswerCall}
-                      />
+                      {/* 1. NOTES PANEL (Top) */}
+                      {isNotesPinnedDesktop && (
+                          <div className={`flex-1 min-h-0 ${isPinnedDesktop ? 'border-b border-slate-800' : ''}`}>
+                              <NotesPanel 
+                                  targetItem={editingTarget} 
+                                  isSfx={editingSfxIndex !== null}
+                                  onUpdateNote={(val) => {
+                                      if (remoteSync.role === 'slave' && editingSfxIndex === null) { 
+                                          remoteSync.sendMasterCommand({ type: 'UPDATE_SONG', index: playlistState.currentIndex, isSfx: false, data: { ...editingTarget, note: val } }); 
+                                      } else { 
+                                          updateTargetItem(i => ({...i, note: val})); 
+                                      }
+                                  }}
+                                  readOnly={isControlsDisabled}
+                                  onClose={() => {
+                                      setNotesPinned(false);
+                                      if (!chatPinned) setLeftPanelWidth(40);
+                                  }}
+                              />
+                          </div>
+                      )}
+
+                      {/* 2. CHAT PANEL (Bottom) */}
+                      {isPinnedDesktop && isChatOpen && (
+                          <div className={`${isNotesPinnedDesktop ? 'flex-1 min-h-0' : 'flex-1 h-full'}`}>
+                                <ChatModal 
+                                  isOpen={true} 
+                                  messages={chatMessages}
+                                  onSendMessage={handleSendChatMessage}
+                                  onEndCall={handleEndCall}
+                                  onCloseWindow={handleCloseChatWindow} // NEW PROP HANDLED
+                                  t={t}
+                                  isPinned={chatPinned}
+                                  onTogglePin={(val) => { 
+                                      setChatPinned(val); 
+                                      if(!val && !notesPinned) setLeftPanelWidth(40); 
+                                  }} 
+                                  displayMode="docked"
+                                  connectedStatus={callStatus}
+                                  onAnswerCall={handleAnswerCall}
+                              />
+                          </div>
+                      )}
                   </div>
               )}
           </div>
@@ -1738,7 +1940,20 @@ const App: React.FC = () => {
       <NoteModal isOpen={noteModalOpen} initialValue={(editingTarget as Song)?.note || ''} onSave={(val) => { if (remoteSync.role === 'slave' && editingSfxIndex === null) { remoteSync.sendMasterCommand({ type: 'UPDATE_SONG', index: playlistState.currentIndex, isSfx: false, data: { ...editingTarget, note: val } }); } else { updateTargetItem(i => ({...i, note: val})); }}} onClose={() => setNoteModalOpen(false)} t={t} />
       <RawEditorModal isOpen={rawEditorOpen} initialContent={playlistActions.generatePlaylistContent()} onSave={handleRawSaveRequest} onClose={() => setRawEditorOpen(false)} t={t} />
       <RawEditorModal isOpen={logViewerOpen} initialContent={logContent} onSave={() => {}} onClose={() => setLogViewerOpen(false)} t={t} readOnly={true} title="File log della playlist" /> 
-      <NetworkModal isOpen={networkModalOpen} onClose={() => setNetworkModalOpen(false)} sync={remoteSync} t={t} clientPin={clientPin} onChangeClientPin={(val) => { setClientPin(val); saveSettings({ clientPin: val }); }} serverPin={serverPin} clientName={clientName} songs={playlistState.songs} sfx={playlistState.sfxItems} masterFilePath={remoteSyncPath} onAssetsUpdated={handleReloadAssets} /> 
+      <NetworkModal 
+          isOpen={networkModalOpen} 
+          onClose={() => setNetworkModalOpen(false)} 
+          sync={remoteSync} 
+          t={t} 
+          clientPin={clientPin} 
+          onChangeClientPin={(val) => { setClientPin(val); saveSettings({ clientPin: val }); }} 
+          serverPin={serverPin} 
+          clientName={clientName} 
+          songs={playlistState.songs} 
+          sfx={playlistState.sfxItems} 
+          masterFilePath={remoteSyncPath} 
+          onAssetsUpdated={handleReloadAssets} // UPDATED HANDLER
+      /> 
       <RenameModal 
           isOpen={renameModal.isOpen}
           initialValue={renameModal.name}
@@ -1779,6 +1994,7 @@ const App: React.FC = () => {
               messages={chatMessages}
               onSendMessage={handleSendChatMessage}
               onEndCall={handleEndCall}
+              onCloseWindow={handleCloseChatWindow} // NEW PROP PASSED
               t={t}
               isPinned={chatPinned}
               onTogglePin={(val) => setChatPinned(val)}

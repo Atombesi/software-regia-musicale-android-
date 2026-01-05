@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { Wifi, Server, Smartphone, Monitor, CheckCircle2, XCircle, Loader2, Network, X, History, DownloadCloud, Lock, UserCircle, Trash2, Power, MessageSquare } from 'lucide-react';
+import { Wifi, Server, Smartphone, Monitor, CheckCircle2, XCircle, Loader2, Network, X, History, DownloadCloud, Lock, UserCircle, Trash2, Power, MessageSquare, AlertTriangle, FileWarning } from 'lucide-react';
 import { RemoteSyncHook } from '../../hooks/useRemoteSync';
 import { isAndroidPlatform, extractFileName } from '../../utils/platformUtils';
 import { Song, SfxItem } from '../../types';
-import { checkLocalAsset, saveDownloadedAsset, ASSETS_FOLDER } from '../../utils/androidFileUtils';
-import { writeTextFile } from '../../utils/filesystemUtils';
+import { checkLocalAsset, ASSETS_FOLDER } from '../../utils/androidFileUtils';
+import { writeTextFile, saveDownloadedAssetUniversal } from '../../utils/filesystemUtils';
 import { Directory } from '@capacitor/filesystem';
 
 interface NetworkModalProps {
@@ -16,7 +16,7 @@ interface NetworkModalProps {
     songs?: Song[];
     sfx?: SfxItem[];
     masterFilePath?: string; // PATH OF THE PLAYLIST FILE ON MASTER
-    onAssetsUpdated?: () => void;
+    onAssetsUpdated?: (songs?: Song[], sfx?: SfxItem[]) => void; // MODIFIED SIGNATURE
     
     // SECURITY PROPS
     clientPin?: string;
@@ -37,6 +37,10 @@ const NetworkModal: React.FC<NetworkModalProps> = ({
     const [isDownloading, setIsDownloading] = useState(false);
     const [downloadProgress, setDownloadProgress] = useState(0); // 0-100
     const [downloadStatusText, setDownloadStatusText] = useState("");
+    
+    // Error Reporting State
+    const [errorDetails, setErrorDetails] = useState<string[]>([]);
+    const [showErrorDialog, setShowErrorDialog] = useState(false);
 
     useEffect(() => {
         // Load IP history
@@ -64,9 +68,10 @@ const NetworkModal: React.FC<NetworkModalProps> = ({
         if (!sync.connectedIP) return;
         setIsDownloading(true);
         setDownloadProgress(0);
+        setErrorDetails([]); // Reset errors
+        setShowErrorDialog(false);
         
         const allItems = [...songs, ...sfx.filter(s => s && s.url)];
-        // Add 1 step for playlist file if available
         const total = allItems.length + (masterFilePath ? 1 : 0);
         
         if (total === 0) {
@@ -78,6 +83,116 @@ const NetworkModal: React.FC<NetworkModalProps> = ({
         let completed = 0;
         const errors: string[] = [];
 
+        // --- WINDOWS SPECIFIC LOGIC ---
+        if (!isAndroidPlatform()) {
+            const electron = (window as any).electronAPI;
+            if (electron) {
+                try {
+                    // 1. Determine Target Path: Downloads/RegiaMusiche_Client
+                    const downloadDir = await electron.getPath('downloads');
+                    // Force using forward slashes for internal consistency in JS, Electron/Node handles OS path seps
+                    const targetDir = `${downloadDir.replace(/\\/g, '/')}/RegiaMusiche_Client`;
+                    
+                    // 2. Create Directory
+                    await electron.createDir(targetDir);
+                    
+                    // Arrays to hold the remapped items
+                    const remappedSongs = songs.map(s => ({...s})); // Clone
+                    const remappedSfx = sfx.map(s => s ? {...s} : undefined); // Clone
+
+                    // 3. Loop and Download
+                    for (const item of allItems) {
+                        if (!item || !item.originalFileName) continue;
+                        const fileName = item.originalFileName;
+                        
+                        // Path on local disk
+                        const localFullPath = `${targetDir}/${fileName}`;
+                        
+                        setDownloadStatusText(`${t.download_progress} ${fileName}`);
+
+                        let masterUrl = ""; // Init here for scope visibility in catch
+
+                        try {
+                            // Download from Master
+                            masterUrl = `http://${sync.connectedIP}:8081/stream?path=${encodeURIComponent(item.path || "")}`;
+                            const response = await fetch(masterUrl);
+                            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                            const blob = await response.blob();
+                            
+                            // Convert to Base64
+                            const base64 = await new Promise<string>((resolve, reject) => {
+                                const reader = new FileReader();
+                                reader.onloadend = () => resolve((reader.result as string).split(',')[1]);
+                                reader.onerror = reject;
+                                reader.readAsDataURL(blob);
+                            });
+
+                            // Write to Disk
+                            await electron.writeBinary(localFullPath, base64);
+
+                            // REMAP IN MEMORY
+                            // Update Song references
+                            remappedSongs.forEach(s => {
+                                if (s.id === item.id) {
+                                    s.path = localFullPath; // Real absolute path on Windows
+                                    s.url = `file:///${localFullPath}`; // URL for Audio Player
+                                }
+                            });
+                            // Update SFX references
+                            remappedSfx.forEach(s => {
+                                if (s && s.id === item.id) {
+                                    s.path = localFullPath;
+                                    s.url = `file:///${localFullPath}`;
+                                }
+                            });
+
+                        } catch (e: any) {
+                            console.error(`Error downloading ${fileName}`, e);
+                            // ENHANCED DEBUG LOGGING
+                            errors.push(`FILE: ${fileName}\nURL: ${masterUrl}\nORIG_PATH: ${item.path}\nDEST: ${localFullPath}\nERR: ${e.message}`);
+                        }
+                        
+                        completed++;
+                        setDownloadProgress(Math.round((completed / total) * 100));
+                    }
+
+                    // Download Playlist File (Optional/Backup)
+                    if (masterFilePath) {
+                        try {
+                            const playlistName = extractFileName(masterFilePath);
+                            const masterUrl = `http://${sync.connectedIP}:8081/stream?path=${encodeURIComponent(masterFilePath)}`;
+                            const response = await fetch(masterUrl);
+                            if (response.ok) {
+                                const text = await response.text();
+                                await electron.writeFile(`${targetDir}/${playlistName}`, text);
+                            }
+                        } catch (e) {}
+                        completed++;
+                        setDownloadProgress(Math.round((completed / total) * 100));
+                    }
+
+                    setIsDownloading(false);
+                    if (errors.length > 0) {
+                        setDownloadStatusText(`${t.download_error}: ${errors.length} files failed.`);
+                        setErrorDetails([`TARGET FOLDER: ${targetDir}`, ...errors]);
+                        setShowErrorDialog(true);
+                    } else {
+                        setDownloadStatusText(t.download_complete);
+                        // TRIGGER REMAP IN APP
+                        if (onAssetsUpdated) onAssetsUpdated(remappedSongs, remappedSfx as SfxItem[]);
+                    }
+                    return; // EXIT FUNCTION FOR WINDOWS
+
+                } catch (mainErr: any) {
+                    setIsDownloading(false);
+                    setErrorDetails([`INIT ERROR: ${mainErr.message}`]);
+                    setShowErrorDialog(true);
+                    return;
+                }
+            }
+        }
+
+        // --- ANDROID LOGIC (EXISTING) ---
         // 1. DOWNLOAD PLAYLIST FILE (.txt)
         if (masterFilePath) {
             const playlistName = extractFileName(masterFilePath);
@@ -89,12 +204,13 @@ const NetworkModal: React.FC<NetworkModalProps> = ({
                 
                 const textContent = await response.text();
                 
-                // === MODIFIED: SAVE TO ASSETS FOLDER ===
-                await writeTextFile(`${ASSETS_FOLDER}/${playlistName}`, playlistName, textContent, Directory.External);
+                if(isAndroidPlatform()) {
+                     await writeTextFile(`${ASSETS_FOLDER}/${playlistName}`, playlistName, textContent, Directory.External);
+                } 
                 
             } catch (e: any) {
                 console.error(`Error downloading playlist ${playlistName}`, e);
-                errors.push(playlistName);
+                errors.push(`PLAYLIST: ${playlistName}\nPATH: ${masterFilePath}\nERR: ${e.message}`);
             }
             completed++;
             setDownloadProgress(Math.round((completed / total) * 100));
@@ -108,8 +224,12 @@ const NetworkModal: React.FC<NetworkModalProps> = ({
             setDownloadStatusText(`${t.download_progress} ${fileName}`);
 
             try {
-                // 1. Check if exists locally
-                const exists = await checkLocalAsset(fileName);
+                // 1. Check if exists locally (Optimization for Android)
+                let exists = false;
+                if(isAndroidPlatform()) {
+                    exists = (await checkLocalAsset(fileName)) !== null;
+                }
+                
                 if (exists) {
                     // Skip download
                 } else {
@@ -133,12 +253,12 @@ const NetworkModal: React.FC<NetworkModalProps> = ({
                         reader.readAsDataURL(blob);
                     });
 
-                    // 3. Save to Assets
-                    await saveDownloadedAsset(fileName, base64);
+                    // 3. Save to Assets (Universal)
+                    await saveDownloadedAssetUniversal(fileName, base64);
                 }
             } catch (e: any) {
                 console.error(`Error downloading ${fileName}`, e);
-                errors.push(fileName);
+                errors.push(`FILE: ${fileName}\nREMOTE PATH: ${item.path}\nERR: ${e.message}`);
             }
 
             completed++;
@@ -148,6 +268,8 @@ const NetworkModal: React.FC<NetworkModalProps> = ({
         setIsDownloading(false);
         if (errors.length > 0) {
              setDownloadStatusText(`${t.download_error}: ${errors.length} files failed.`);
+             setErrorDetails(errors);
+             setShowErrorDialog(true);
         } else {
              setDownloadStatusText(t.download_complete);
              // Trigger App refresh
@@ -165,8 +287,43 @@ const NetworkModal: React.FC<NetworkModalProps> = ({
 
     return (
         <div className="fixed inset-0 z-[190] bg-black/90 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
-            <div className="bg-slate-900 border border-slate-700 rounded-3xl shadow-2xl max-w-md w-full flex flex-col overflow-hidden max-h-[90vh]">
+            <div className="bg-slate-900 border border-slate-700 rounded-3xl shadow-2xl max-w-md w-full flex flex-col overflow-hidden max-h-[90vh] relative">
                 
+                {/* --- ERROR DETAIL OVERLAY --- */}
+                {showErrorDialog && (
+                    <div className="absolute inset-0 z-[200] bg-slate-950 flex flex-col animate-in fade-in slide-in-from-bottom-10">
+                        <div className="p-4 border-b border-slate-800 bg-red-900/20 flex items-center gap-3 shrink-0">
+                            <AlertTriangle className="w-6 h-6 text-red-500" />
+                            <h3 className="font-bold text-white text-lg">Report Errori Download</h3>
+                        </div>
+                        <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
+                            <p className="text-slate-400 text-xs mb-4">
+                                I seguenti file non sono stati scaricati correttamente. Verifica i percorsi sul PC Master o i permessi di scrittura locale.
+                            </p>
+                            <div className="flex flex-col gap-2">
+                                {errorDetails.map((err, idx) => (
+                                    <div key={idx} className="bg-slate-900 border border-slate-700 p-3 rounded-lg">
+                                        <textarea
+                                            readOnly
+                                            value={err}
+                                            className="w-full h-24 bg-black/30 border border-slate-800 rounded p-2 text-[10px] font-mono text-red-300 resize-none focus:outline-none focus:border-red-500"
+                                            onClick={(e) => (e.target as HTMLTextAreaElement).select()}
+                                        />
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                        <div className="p-4 border-t border-slate-800 shrink-0">
+                            <button 
+                                onClick={() => setShowErrorDialog(false)}
+                                className="w-full py-3 bg-slate-800 hover:bg-slate-700 text-white rounded-xl font-bold transition-colors border border-slate-600"
+                            >
+                                Chiudi Report
+                            </button>
+                        </div>
+                    </div>
+                )}
+
                 {/* Header */}
                 <div className="p-4 border-b border-slate-800 flex items-center justify-between shrink-0 bg-slate-900">
                     <div className="flex items-center gap-3">
@@ -405,7 +562,16 @@ const NetworkModal: React.FC<NetworkModalProps> = ({
                                                       <DownloadCloud className="w-4 h-4" /> {t.btn_download_media}
                                                   </button>
                                               )}
-                                              {downloadStatusText && !isDownloading && <p className="text-[10px] text-emerald-400 mt-2 font-bold">{downloadStatusText}</p>}
+                                              {downloadStatusText && !isDownloading && <p className={`text-[10px] mt-2 font-bold ${errorDetails.length > 0 ? 'text-red-400' : 'text-emerald-400'}`}>{downloadStatusText}</p>}
+                                              
+                                              {errorDetails.length > 0 && !isDownloading && (
+                                                  <button 
+                                                      onClick={() => setShowErrorDialog(true)}
+                                                      className="mt-2 text-[10px] text-red-300 underline hover:text-white"
+                                                  >
+                                                      Visualizza Dettagli Errori ({errorDetails.length})
+                                                  </button>
+                                              )}
                                          </div>
                                      )}
 

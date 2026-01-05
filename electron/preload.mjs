@@ -7,8 +7,10 @@ try {
     // FILESYSTEM
     saveDialog: (defaultName) => ipcRenderer.invoke('dialog:save', defaultName),
     selectFolder: () => ipcRenderer.invoke('dialog:openDirectory'),
+    getPath: (name) => ipcRenderer.invoke('app:getPath', name), // NEW: Get System Path
     readFile: (path) => ipcRenderer.invoke('file:read', path),
     writeFile: (path, content) => ipcRenderer.invoke('file:write', path, content),
+    writeBinary: (path, base64) => ipcRenderer.invoke('file:writeBinary', path, base64), 
     copyFile: (src, dest) => ipcRenderer.invoke('file:copy', src, dest),
     createDir: (path) => ipcRenderer.invoke('dir:create', path),
     exists: (path) => ipcRenderer.invoke('file:exists', path),
@@ -22,7 +24,6 @@ try {
         kick: (clientId) => ipcRenderer.invoke('server:kick', clientId),
         
         // Listeners (from Main to Renderer)
-        // FIX: Remove listeners before adding new ones to prevent duplicates (double chat messages)
         onClientMessage: (callback) => {
             ipcRenderer.removeAllListeners('server:command');
             ipcRenderer.on('server:command', (_event, value) => callback(value));

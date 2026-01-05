@@ -7,6 +7,7 @@ interface ChatModalProps {
     messages: { text: string, sender?: string, isMe: boolean, time: number }[];
     onSendMessage: (text: string) => void;
     onEndCall: () => void;
+    onCloseWindow?: () => void; // NEW PROP
     t: any;
     isPinned?: boolean;
     onTogglePin?: (val: boolean) => void;
@@ -16,7 +17,7 @@ interface ChatModalProps {
 }
 
 const ChatModal: React.FC<ChatModalProps> = ({ 
-    isOpen, messages, onSendMessage, onEndCall, t, 
+    isOpen, messages, onSendMessage, onEndCall, onCloseWindow, t, 
     isPinned = false, onTogglePin, displayMode = 'floating', connectedStatus = 'connected', onAnswerCall 
 }) => {
     const [input, setInput] = useState("");
@@ -182,24 +183,30 @@ const ChatModal: React.FC<ChatModalProps> = ({
                     )}
 
                     {(!isPinned || connectedStatus === 'connected') && (
-                        <button 
-                            onClick={onEndCall}
-                            className={`p-1.5 hover:text-white rounded-lg transition-colors border flex items-center justify-center
-                                ${connectedStatus === 'connected'
-                                    ? 'bg-red-900/50 hover:bg-red-600 text-red-200 border-red-900' 
-                                    : 'bg-slate-800 text-slate-400 border-slate-700 hover:bg-slate-700' 
-                                }
-                            `}
-                            title={connectedStatus === 'connected' ? t.call_end : "Chiudi"}
-                            onMouseDown={(e) => e.stopPropagation()}
-                            onTouchStart={(e) => e.stopPropagation()}
-                        >
-                            {connectedStatus === 'connected' ? (
-                                <PhoneOff className={`${isAndroid ? 'w-3 h-3' : 'w-4 h-4'}`} />
-                            ) : (
-                                <X className={`${isAndroid ? 'w-3 h-3' : 'w-4 h-4'}`} />
+                        <div className="flex gap-2">
+                            {/* HANGUP BUTTON */}
+                            {connectedStatus === 'connected' && (
+                                <button 
+                                    onClick={onEndCall}
+                                    className="p-1.5 bg-red-900/50 hover:bg-red-600 text-red-200 hover:text-white rounded-lg transition-colors border border-red-900 flex items-center justify-center"
+                                    title={t.call_end}
+                                    onMouseDown={(e) => e.stopPropagation()}
+                                >
+                                    <PhoneOff className={`${isAndroid ? 'w-3 h-3' : 'w-4 h-4'}`} />
+                                </button>
                             )}
-                        </button>
+                            
+                            {/* CLOSE WINDOW BUTTON */}
+                            <button 
+                                onClick={onCloseWindow || onEndCall} // Fallback to end call if prop missing
+                                className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white rounded-lg transition-colors border border-slate-700 flex items-center justify-center"
+                                title="Chiudi Finestra"
+                                onMouseDown={(e) => e.stopPropagation()}
+                                onTouchStart={(e) => e.stopPropagation()}
+                            >
+                                <X className={`${isAndroid ? 'w-3 h-3' : 'w-4 h-4'}`} />
+                            </button>
+                        </div>
                     )}
                 </div>
             </div>

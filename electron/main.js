@@ -261,6 +261,11 @@ app.whenReady().then(() => {
     return canceled ? null : filePaths[0];
   });
 
+  // 1c. Get Path (NEW - For default download location)
+  ipcMain.handle('app:getPath', async (event, name) => {
+      return app.getPath(name);
+  });
+
   // 2. Lettura File (Node FS reale)
   ipcMain.handle('file:read', async (event, filePath) => {
     // console.log('Reading file:', filePath);
@@ -285,7 +290,19 @@ app.whenReady().then(() => {
     }
   });
 
-  // 3b. Copia File (NEW)
+  // 3b. Scrittura Binaria (NEW - PER ASSET DOWNLOAD)
+  // Riceve base64 e scrive binario.
+  ipcMain.handle('file:writeBinary', async (event, filePath, base64Data) => {
+      try {
+          await fs.writeFile(filePath, base64Data, 'base64');
+          return true;
+      } catch (e) {
+          console.error('Write Binary Error:', e);
+          throw new Error(`Failed to write binary file: ${filePath} - ${e.message}`);
+      }
+  });
+
+  // 3c. Copia File (NEW)
   ipcMain.handle('file:copy', async (event, src, dest) => {
       try {
           await fs.copyFile(src, dest);
@@ -296,7 +313,7 @@ app.whenReady().then(() => {
       }
   });
 
-  // 3c. Crea Directory (NEW)
+  // 3d. Crea Directory (NEW)
   ipcMain.handle('dir:create', async (event, dirPath) => {
       try {
           await fs.mkdir(dirPath, { recursive: true });
