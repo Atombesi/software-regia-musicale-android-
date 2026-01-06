@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef } from 'react';
 import { Send, PhoneOff, MessageSquare, Move, Pin, PinOff, X, PhoneIncoming, PhoneCall } from 'lucide-react';
 import { isAndroidPlatform } from '../../utils/platformUtils';
@@ -300,18 +301,28 @@ const ChatModal: React.FC<ChatModalProps> = ({
                         )}
                         {messages.map((msg, idx) => (
                             <div key={idx} className={`flex flex-col ${msg.isMe ? 'items-end' : 'items-start'}`}>
+                                {/* INCOMING MESSAGES: Header with Time - Name */}
                                 {!msg.isMe && msg.sender && (
-                                    <span className="text-[9px] text-slate-400 ml-2 mb-0.5 opacity-70">{msg.sender}</span>
+                                    <div className="flex items-baseline gap-1 ml-2 mb-0.5 opacity-70">
+                                        <span className="text-[9px] text-slate-500 font-mono">
+                                            {new Date(msg.time).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                                        </span>
+                                        <span className="text-[9px] text-slate-600">-</span>
+                                        <span className="text-[10px] text-slate-400 font-bold">{msg.sender}</span>
+                                    </div>
                                 )}
                                 <div className={`max-w-[85%] rounded-xl px-3 py-1.5 shadow-md ${
                                     msg.isMe 
                                         ? 'bg-emerald-600 text-white rounded-tr-none' 
                                         : 'bg-slate-700 text-slate-200 rounded-tl-none'
                                 }`}>
-                                    {msg.text}
-                                    <div className={`text-[8px] mt-0.5 text-right opacity-60 ${msg.isMe ? 'text-emerald-100' : 'text-slate-400'}`}>
-                                        {new Date(msg.time).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
-                                    </div>
+                                    {/* OUTGOING or NO SENDER: Time inline at start */}
+                                    {(msg.isMe || !msg.sender) && (
+                                        <span className={`text-[9px] font-mono mr-2 opacity-60 ${msg.isMe ? 'text-emerald-200' : 'text-slate-400'}`}>
+                                            {new Date(msg.time).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                                        </span>
+                                    )}
+                                    <span className="break-words">{msg.text}</span>
                                 </div>
                             </div>
                         ))}
