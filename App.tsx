@@ -39,7 +39,7 @@ import NetworkModal from './components/modals/NetworkModal';
 import ChatModal from './components/modals/ChatModal'; 
 import RenameModal from './components/modals/RenameModal';
 
-export const APP_VERSION = "Ver 2.6.6";
+export const APP_VERSION = "Ver 2.6.7";
 
 const App: React.FC = () => {
   // LANGUAGE STATE
@@ -744,7 +744,12 @@ const App: React.FC = () => {
   // --- NEW: HANDLE LOCAL WINDOW CLOSE ---
   const handleCloseChatWindow = () => {
       setIsChatOpen(false);
-      // NOTE: This does NOT send a network command. It just hides the window locally.
+      // FIX: Force Unpin if user closes the chat explicitly
+      if (chatPinned) {
+          setChatPinned(false);
+          // Also handle layout resizing if notes aren't pinned
+          if (!notesPinned) setLeftPanelWidth(40);
+      }
   };
 
   const handleSendChatMessage = (text: string) => {
@@ -1676,42 +1681,47 @@ const App: React.FC = () => {
                         {appMode === 'editing' && (
                             <>
                                 <div className="w-full h-px bg-slate-800/50" />
-                                <div className={`flex items-center justify-center gap-4 w-full animate-in fade-in slide-in-from-top-2 ${isControlsDisabled ? 'pointer-events-none' : ''}`}>
-                                    <button
-                                        onClick={() => (playerState.isPlaying && playbackSource === 'waveform' ? requestPause() : handleEditorPlay())}
-                                        className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${playerState.isPlaying && playbackSource === 'waveform' ? 'bg-indigo-500/20 text-indigo-400 border border-indigo-500/50' : 'bg-slate-800 text-slate-300 border border-slate-600 hover:text-white hover:border-white'}`}
-                                        title={t.play_raw_tooltip}
-                                    >
-                                        {playerState.isPlaying && playbackSource === 'waveform' ? <PauseCircle className="w-6 h-6" /> : <PlayCircle className="w-6 h-6" />}
-                                    </button>
-
-                                    <button onClick={handleResetTrackConditions} className="h-10 w-10 flex items-center justify-center rounded-lg border border-slate-700 bg-slate-900 text-slate-500 hover:text-white hover:border-white transition-all shadow-sm" title={t.reset_track_tooltip}><RefreshCcw className="w-4 h-4" /></button>
+                                <div className="flex items-center justify-center gap-4 w-full animate-in fade-in slide-in-from-top-2">
                                     
-                                    <div className="flex items-center gap-3 bg-slate-900 p-2 rounded-xl border border-slate-700">
-                                        <span className="text-[10px] text-slate-500 font-bold uppercase w-12 text-right">{t.volume}</span>
-                                        <input type="range" min="0" max="1" step="0.01" value={editingTarget?.customGain || 1.0} onChange={(e) => updateTargetItem(i => ({...i, customGain: parseFloat(e.target.value)}))} className="w-32 h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-indigo-400 [&::-webkit-slider-thumb]:rounded-full hover:[&::-webkit-slider-thumb]:bg-white" />
-                                        <span className="font-mono text-xs w-10 text-center text-indigo-400 font-bold">{Math.round((editingTarget?.customGain || 1)*100)}%</span>
+                                    {/* WRAPPER PER CONTROLLI DISABILITATI IN SOLA LETTURA */}
+                                    <div className={`flex items-center gap-4 ${isControlsDisabled ? 'pointer-events-none opacity-50' : ''}`}>
+                                        <button
+                                            onClick={() => (playerState.isPlaying && playbackSource === 'waveform' ? requestPause() : handleEditorPlay())}
+                                            className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${playerState.isPlaying && playbackSource === 'waveform' ? 'bg-indigo-500/20 text-indigo-400 border border-indigo-500/50' : 'bg-slate-800 text-slate-300 border border-slate-600 hover:text-white hover:border-white'}`}
+                                            title={t.play_raw_tooltip}
+                                        >
+                                            {playerState.isPlaying && playbackSource === 'waveform' ? <PauseCircle className="w-6 h-6" /> : <PlayCircle className="w-6 h-6" />}
+                                        </button>
+
+                                        <button onClick={handleResetTrackConditions} className="h-10 w-10 flex items-center justify-center rounded-lg border border-slate-700 bg-slate-900 text-slate-500 hover:text-white hover:border-white transition-all shadow-sm" title={t.reset_track_tooltip}><RefreshCcw className="w-4 h-4" /></button>
+                                        
+                                        <div className="flex items-center gap-3 bg-slate-900 p-2 rounded-xl border border-slate-700">
+                                            <span className="text-[10px] text-slate-500 font-bold uppercase w-12 text-right">{t.volume}</span>
+                                            <input type="range" min="0" max="1" step="0.01" value={editingTarget?.customGain || 1.0} onChange={(e) => updateTargetItem(i => ({...i, customGain: parseFloat(e.target.value)}))} className="w-32 h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-indigo-400 [&::-webkit-slider-thumb]:rounded-full hover:[&::-webkit-slider-thumb]:bg-white" />
+                                            <span className="font-mono text-xs w-10 text-center text-indigo-400 font-bold">{Math.round((editingTarget?.customGain || 1)*100)}%</span>
+                                        </div>
+
+                                        <button 
+                                            onClick={() => updateTargetItem(i => ({...i, hasFadeOut: !i.hasFadeOut}))}
+                                            className={`h-10 px-4 rounded-lg border flex items-center gap-2 transition-all ${editingTarget?.hasFadeOut ? 'bg-rose-900/40 border-rose-500 text-rose-400' : 'bg-slate-900 border-slate-700 text-slate-500 opacity-60'}`}
+                                        >
+                                            <Wind className="w-4 h-4" />
+                                            <span className="text-xs font-bold">{t.fade_btn}</span>
+                                        </button>
+
+                                        {editingSfxIndex === null && (
+                                            <button 
+                                                onClick={() => setNoteModalOpen(true)}
+                                                className="h-10 w-10 ml-2 rounded-xl border border-slate-600 bg-slate-800 text-amber-400 hover:text-white hover:border-amber-500 transition-all flex items-center justify-center"
+                                                title={t.edit_note_tooltip}
+                                            >
+                                                <StickyNote className="w-5 h-5" />
+                                            </button>
+                                        )}
                                     </div>
 
-                                    <button 
-                                        onClick={() => updateTargetItem(i => ({...i, hasFadeOut: !i.hasFadeOut}))}
-                                        className={`h-10 px-4 rounded-lg border flex items-center gap-2 transition-all ${editingTarget?.hasFadeOut ? 'bg-rose-900/40 border-rose-500 text-rose-400' : 'bg-slate-900 border-slate-700 text-slate-500 opacity-60'}`}
-                                    >
-                                        <Wind className="w-4 h-4" />
-                                        <span className="text-xs font-bold">{t.fade_btn}</span>
-                                    </button>
-
-                                    {editingSfxIndex === null && (
-                                        <button 
-                                            onClick={() => setNoteModalOpen(true)}
-                                            className="h-10 w-10 ml-2 rounded-xl border border-slate-600 bg-slate-800 text-amber-400 hover:text-white hover:border-amber-500 transition-all flex items-center justify-center"
-                                            title={t.edit_note_tooltip}
-                                        >
-                                            <StickyNote className="w-5 h-5" />
-                                        </button>
-                                    )}
-
                                     {/* --- REMOTE SYNC BUTTON (Visible ONLY in SLAVE Mode) --- */}
+                                    {/* FIX: MOVED OUTSIDE POINTER-EVENTS-NONE CONTAINER TO BE CLICKABLE */}
                                     {remoteSync.role === 'slave' && (
                                         <button
                                             ref={localSaveBtnRef}
