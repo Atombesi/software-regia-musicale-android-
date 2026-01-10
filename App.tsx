@@ -1,3 +1,4 @@
+
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { Song, SfxItem, AppMode, Language } from './types';
 import FileLoader from './components/FileLoader';
@@ -39,7 +40,7 @@ import NetworkModal from './components/modals/NetworkModal';
 import ChatModal from './components/modals/ChatModal'; 
 import RenameModal from './components/modals/RenameModal';
 
-export const APP_VERSION = "Ver 2.6.7";
+export const APP_VERSION = "Ver 2.6.9";
 
 const App: React.FC = () => {
   // LANGUAGE STATE
@@ -1592,7 +1593,47 @@ const App: React.FC = () => {
 
               <div className="flex-1 flex flex-col bg-slate-900 border-l border-slate-800 min-w-0 overflow-hidden relative">
                 
-                {/* MOVED NETWORK ICONS OUT OF HERE TO ROOT FOR Z-INDEX FIX */}
+                {/* --- RELOCATED NETWORK & CHAT BUTTONS (ABSOLUTE POSITIONING) --- */}
+                {!pickerState.isOpen && (
+                    <div className="absolute top-4 right-4 z-50 flex gap-2">
+                        <button 
+                            onClick={() => setNetworkModalOpen(true)}
+                            className={`p-1.5 rounded-full border transition-all shadow-lg flex items-center gap-2 px-3 ${
+                                remoteSync.status === 'connected' 
+                                    ? 'bg-emerald-600/90 text-white border-emerald-500 hover:bg-emerald-500' 
+                                    : 'bg-slate-800/80 text-indigo-400 border-slate-600 hover:border-indigo-500'
+                            }`}
+                        >
+                            <Wifi className="w-4 h-4" />
+                            {remoteSync.status === 'connected' && <span className="text-xs font-bold uppercase">{remoteSync.role === 'master' ? `Master (${remoteSync.clientCount})` : 'Slave'}</span>}
+                        </button>
+                        {remoteSync.status === 'connected' && (
+                            <button 
+                                onClick={() => {
+                                    if (callStatus === 'connected' && !isChatOpen) {
+                                        // HANDLE GHOST WINDOW LOGIC
+                                        setIsChatOpen(true);
+                                        if (!isAndroid && notesPinned) setChatPinned(true);
+                                    } else {
+                                        handleStartCall();
+                                    }
+                                }}
+                                className={`p-2 rounded-full border transition-all shadow-lg flex items-center justify-center ${
+                                    callStatus === 'ringing'
+                                        ? 'bg-amber-500 text-white border-amber-400 animate-pulse ring-4 ring-amber-500/30'
+                                        : callStatus === 'calling'
+                                            ? 'bg-emerald-600 text-white border-emerald-500 animate-pulse'
+                                            : callStatus === 'connected'
+                                                ? 'bg-emerald-500 text-white border-emerald-400'
+                                                : 'bg-white text-slate-900 border-slate-300 hover:bg-slate-100'
+                                }`}
+                                title={callStatus === 'ringing' ? t.call_answer : t.chat_title}
+                            >
+                                {callStatus === 'ringing' ? <PhoneIncoming className="w-5 h-5" /> : (callStatus === 'calling' ? <PhoneCall className="w-5 h-5" /> : <Phone className="w-5 h-5" />)}
+                            </button>
+                        )}
+                    </div>
+                )}
 
                 <div className={`${waveformHeightClass} shrink-0 border-b border-slate-800 relative bg-black/40 transition-[height] duration-300 overflow-hidden`}>
                     {showWaveform ? (
@@ -1909,39 +1950,6 @@ const App: React.FC = () => {
              />
           </div>
           
-          {/* --- FIXED NETWORK & CHAT BUTTONS (MOVED OUTSIDE PANELS) --- */}
-          {!pickerState.isOpen && (
-              <div className="fixed top-4 right-4 z-[100] flex gap-2">
-                  <button 
-                      onClick={() => setNetworkModalOpen(true)}
-                      className={`p-1.5 rounded-full border transition-all shadow-lg flex items-center gap-2 px-3 ${
-                          remoteSync.status === 'connected' 
-                              ? 'bg-emerald-600/90 text-white border-emerald-500 hover:bg-emerald-500' 
-                              : 'bg-slate-800/80 text-indigo-400 border-slate-600 hover:border-indigo-500'
-                      }`}
-                  >
-                      <Wifi className="w-4 h-4" />
-                      {remoteSync.status === 'connected' && <span className="text-xs font-bold uppercase">{remoteSync.role === 'master' ? `Master (${remoteSync.clientCount})` : 'Slave'}</span>}
-                  </button>
-                  {remoteSync.status === 'connected' && (
-                      <button 
-                          onClick={handleStartCall}
-                          className={`p-2 rounded-full border transition-all shadow-lg flex items-center justify-center ${
-                              callStatus === 'ringing'
-                                  ? 'bg-amber-500 text-white border-amber-400 animate-pulse ring-4 ring-amber-500/30'
-                                  : callStatus === 'calling'
-                                      ? 'bg-emerald-600 text-white border-emerald-500 animate-pulse'
-                                      : callStatus === 'connected'
-                                          ? 'bg-emerald-500 text-white border-emerald-400'
-                                          : 'bg-white text-slate-900 border-slate-300 hover:bg-slate-100'
-                          }`}
-                          title={callStatus === 'ringing' ? t.call_answer : t.chat_title}
-                      >
-                          {callStatus === 'ringing' ? <PhoneIncoming className="w-5 h-5" /> : (callStatus === 'calling' ? <PhoneCall className="w-5 h-5" /> : <Phone className="w-5 h-5" />)}
-                      </button>
-                  )}
-              </div>
-          )}
       </div>
 
       <ConfirmModal isOpen={confirmModal.isOpen} title={confirmModal.title} message={confirmModal.message} confirmText={confirmModal.confirmText} cancelText={confirmModal.cancelText} onConfirm={confirmModal.action} onCancel={() => setConfirmModal(prev => ({...prev, isOpen: false}))} />

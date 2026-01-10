@@ -1,5 +1,5 @@
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { Song, AppMode, Language } from '../types';
 import { Music2, PlayCircle, PauseCircle, Upload, Disc, Check, Edit3, MonitorPlay, RotateCcw, Save, Scissors, Wind, SignalHigh, GripVertical, Plus, AlertTriangle, Activity, Trash2, FileSignature, Info, Link2, ChevronUp, ChevronDown, StickyNote, Minimize2, Maximize2, FilePenLine, FileText, MessageSquare, Timer, Divide, Pin } from 'lucide-react';
 import { translations } from '../translations';
@@ -214,6 +214,27 @@ const PlaylistView: React.FC<PlaylistViewProps> = ({
   const [customActNote, setCustomActNote] = useState("");
   const [showNoteInput, setShowNoteInput] = useState(false);
 
+  // --- COUNTING LOGIC (Exclude Separators) ---
+  const totalAudioTracks = useMemo(() => {
+      return songs.filter(s => s.type !== 'separator').length;
+  }, [songs]);
+
+  const playedAudioTracks = useMemo(() => {
+      // Counts non-separator tracks before current index
+      if (currentIndex >= songs.length) return totalAudioTracks; // All played
+      return songs.slice(0, currentIndex).filter(s => s.type !== 'separator').length;
+  }, [songs, currentIndex, totalAudioTracks]);
+
+  // --- VISUAL INDICES CALCULATION (Exclude Separators from numbering) ---
+  const visualIndices = useMemo(() => {
+      let count = 0;
+      return songs.map(s => {
+          if (s.type === 'separator') return 0;
+          count++;
+          return count;
+      });
+  }, [songs]);
+
   // Auto-scroll to active song
   useEffect(() => {
     if (activeRef.current) {
@@ -398,10 +419,10 @@ const PlaylistView: React.FC<PlaylistViewProps> = ({
                 <h2 className="text-sm font-semibold text-slate-500 flex items-center gap-2">
                     <Music2 className="w-4 h-4" />
                     {appMode === 'editing' ? (
-                        <span>{songs.length} {t.tracks}</span>
+                        <span>{totalAudioTracks} {t.tracks}</span>
                     ) : (
                         <span className="text-emerald-400 font-bold uppercase tracking-wide">
-                            {t.played_counter}: <span className="text-white">{currentIndex}</span> / <span className="text-white">{songs.length}</span>
+                            {t.played_counter}: <span className="text-white">{playedAudioTracks}</span> / <span className="text-white">{totalAudioTracks}</span>
                         </span>
                     )}
                 </h2>
@@ -531,7 +552,7 @@ const PlaylistView: React.FC<PlaylistViewProps> = ({
                 ) : isPlayedLive ? (
                    <Check className="w-4 h-4" />
                 ) : (
-                  <span className="text-sm font-bold font-mono">{index + 1}</span>
+                  <span className="text-sm font-bold font-mono">{visualIndices[index]}</span>
                 )}
               </div>
               
