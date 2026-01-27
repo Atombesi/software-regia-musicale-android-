@@ -40,7 +40,7 @@ import NetworkModal from './components/modals/NetworkModal';
 import ChatModal from './components/modals/ChatModal'; 
 import RenameModal from './components/modals/RenameModal';
 
-export const APP_VERSION = "Ver 2.6.9";
+export const APP_VERSION = "Ver 2.7.1";
 
 const App: React.FC = () => {
   // LANGUAGE STATE
@@ -58,6 +58,9 @@ const App: React.FC = () => {
   const [clientName, setClientName] = useState("Tablet Remoto"); 
   const [clientPin, setClientPin] = useState(""); 
 
+  // --- GLOBAL FADE SETTINGS ---
+  const [globalFadeDuration, setGlobalFadeDuration] = useState<number>(2.5); // Default manual fade
+
   // Load Settings from LocalStorage
   useEffect(() => {
       try {
@@ -72,6 +75,7 @@ const App: React.FC = () => {
               if (parsed.serverPin !== undefined) setServerPin(parsed.serverPin);
               if (parsed.clientName !== undefined) setClientName(parsed.clientName);
               if (parsed.clientPin !== undefined) setClientPin(parsed.clientPin);
+              if (parsed.globalFadeDuration !== undefined) setGlobalFadeDuration(parsed.globalFadeDuration);
           }
       } catch (e) {}
   }, []);
@@ -80,7 +84,7 @@ const App: React.FC = () => {
   const saveSettings = (updates: any) => {
       const newState = { 
           enableNetwork, enableBeep, callTimeout, language,
-          serverPin, clientName, clientPin,
+          serverPin, clientName, clientPin, globalFadeDuration,
           ...updates 
       };
       localStorage.setItem('regia_settings', JSON.stringify(newState));
@@ -209,7 +213,7 @@ const App: React.FC = () => {
       const vol = Math.round((item.customGain || 1.0) * 100);
       const markIn = item.trimStart ? formatTimeDetail(item.trimStart) : "0";
       const markOut = item.trimEnd ? formatTimeDetail(item.trimEnd) : "End";
-      const fade = item.hasFadeOut ? "SI" : "NO";
+      const fade = item.hasFadeOut ? `SI (${item.fadeOutDuration || 5}s)` : "NO";
       return `(mark-in: ${markIn}; mark-out: ${markOut}; fade: ${fade}; volume: ${vol}%)`;
   };
 
@@ -219,7 +223,7 @@ const App: React.FC = () => {
   // Modals
   const [confirmModal, setConfirmModal] = useState<{isOpen: boolean; title: string; message: string; action: () => void; confirmText?: string; cancelText?: string}>({isOpen: false, title: '', message: '', action: () => {}});
   const [saveSuccessModal, setSaveSuccessModal] = useState({ isOpen: false, location: '', fileName: '' });
-  const [timeEditModal, setTimeEditModal] = useState<{isOpen: boolean; type: 'start'|'end'|'duration'|null; value: number}>({isOpen: false, type: null, value: 0});
+  const [timeEditModal, setTimeEditModal] = useState<{isOpen: boolean; type: 'start'|'end'|'duration'|'fade_auto'|'fade_manual'|null; value: number}>({isOpen: false, type: null, value: 0});
   const [noteModalOpen, setNoteModalOpen] = useState(false); 
   const [infoModalOpen, setInfoModalOpen] = useState(false);
   const [rawEditorOpen, setRawEditorOpen] = useState(false);
@@ -402,10 +406,11 @@ const App: React.FC = () => {
 
   const performManualFade = useCallback((source: 'local' | 'remote' = 'local') => {
       if (appMode === 'presentation' && editingSfxIndex === null) {
-          logEvent(`Traccia ${playlistState.currentIndex + 1}`, "Fade manuale", false, source === 'remote' ? "[client]" : "");
+          logEvent(`Traccia ${playlistState.currentIndex + 1}`, `Fade manuale (${globalFadeDuration}s)`, false, source === 'remote' ? "[client]" : "");
       }
-      audioControls.manualFade();
-  }, [appMode, editingSfxIndex, playlistState.currentIndex, logEvent, audioControls]);
+      // Pass stored global fade duration (in ms) to player
+      audioControls.manualFade(globalFadeDuration * 1000);
+  }, [appMode, editingSfxIndex, playlistState.currentIndex, logEvent, audioControls, globalFadeDuration]);
 
   const performNext = useCallback(() => {
       if (editingSfxIndex !== null) return;
@@ -932,6 +937,23 @@ const App: React.FC = () => {
       else playlistActions.updateSong(playlistState.currentIndex, (s) => updater(s) as Song);
   };
 
+  // --- NEW FADE TOGGLE HANDLER ---
+  const handleToggleFade = () => {
+      if (!editingTarget) return;
+      
+      // If currently ON, turn OFF
+      if (editingTarget.hasFadeOut) {
+          updateTargetItem(i => ({...i, hasFadeOut: false}));
+      } else {
+          // If currently OFF, open Modal to ask duration (Default 5s)
+          setTimeEditModal({ 
+              isOpen: true, 
+              type: 'fade_auto', 
+              value: 5 // Default proposed value
+          });
+      }
+  };
+
   const handlePlaylistLoaded = (newSongs: Song[], newSfx: SfxItem[], fileName?: string, path?: string, directory?: Directory, fromDisk: boolean = true) => {
     audioControls.hardReset();
     if (audioRef.current) audioRef.current.src = "";
@@ -1300,6 +1322,15 @@ const App: React.FC = () => {
      else if (type === 'duration') {
          const start = editingTarget?.trimStart || 0;
          updateTargetItem(i => ({ ...i, trimEnd: start + val }));
+     } else if (type === 'fade_auto') {
+         // ACTIVATE AUTO FADE WITH SPECIFIC DURATION - Force integer
+         const intVal = Math.round(val);
+         updateTargetItem(i => ({ ...i, hasFadeOut: true, fadeOutDuration: intVal }));
+     } else if (type === 'fade_manual') {
+         // UPDATE GLOBAL MANUAL FADE SETTING - Force integer
+         const intVal = Math.round(val);
+         setGlobalFadeDuration(intVal);
+         saveSettings({ globalFadeDuration: intVal });
      }
   };
 
@@ -1309,7 +1340,8 @@ const App: React.FC = () => {
          trimStart: 0,
          trimEnd: 0,
          customGain: 1.0,
-         hasFadeOut: false
+         hasFadeOut: false,
+         fadeOutDuration: 5.0 // Reset to default
      }));
   };
 
@@ -1341,6 +1373,15 @@ const App: React.FC = () => {
         if (parts[0] === 'SFX') {
             const idx = parseInt(parts[1]);
             if (!isNaN(idx) && idx >= 0 && idx < 6) {
+                // FADE PARSING LOGIC
+                let hasFade = false;
+                let fadeDur = 5;
+                if (parts[6] === '1') { hasFade = true; }
+                else {
+                    const f = parseFloat(parts[6]);
+                    if (f > 0) { hasFade = true; fadeDur = f; }
+                }
+
                 sfx[idx] = {
                     id: `sfx-${Date.now()}-${idx}`,
                     label: parts[2],
@@ -1349,7 +1390,8 @@ const App: React.FC = () => {
                     originalFileName: extractFileName(parts[3]),
                     trimStart: parseFloat(parts[4]) || 0,
                     trimEnd: parseFloat(parts[5]) || 0,
-                    hasFadeOut: parts[6] === '1',
+                    hasFadeOut: hasFade,
+                    fadeOutDuration: fadeDur,
                     customGain: parseFloat(parts[7]) || 1.0
                 };
             }
@@ -1365,6 +1407,15 @@ const App: React.FC = () => {
              });
         } else {
             if (parts.length >= 2) {
+                 // FADE PARSING LOGIC
+                 let hasFade = false;
+                 let fadeDur = 5;
+                 if (parts[4] === '1') { hasFade = true; }
+                 else {
+                     const f = parseFloat(parts[4]);
+                     if (f > 0) { hasFade = true; fadeDur = f; }
+                 }
+
                  songs.push({
                     id: `song-${Date.now()}-${index}`,
                     title: parts[0],
@@ -1374,7 +1425,8 @@ const App: React.FC = () => {
                     type: 'audio',
                     trimStart: parseFloat(parts[2]) || 0,
                     trimEnd: parseFloat(parts[3]) || 0,
-                    hasFadeOut: parts[4] === '1',
+                    hasFadeOut: hasFade,
+                    fadeOutDuration: fadeDur,
                     customGain: parseFloat(parts[5]) || 1.0,
                     note: parts[6] || ''
                  });
@@ -1742,12 +1794,19 @@ const App: React.FC = () => {
                                             <span className="font-mono text-xs w-10 text-center text-indigo-400 font-bold">{Math.round((editingTarget?.customGain || 1)*100)}%</span>
                                         </div>
 
+                                        {/* NEW: FADE TOGGLE WITH CONFIG */}
                                         <button 
-                                            onClick={() => updateTargetItem(i => ({...i, hasFadeOut: !i.hasFadeOut}))}
+                                            onClick={handleToggleFade}
                                             className={`h-10 px-4 rounded-lg border flex items-center gap-2 transition-all ${editingTarget?.hasFadeOut ? 'bg-rose-900/40 border-rose-500 text-rose-400' : 'bg-slate-900 border-slate-700 text-slate-500 opacity-60'}`}
+                                            title="Attiva/Disattiva Fade Out (Apre configurazione se attivo)"
                                         >
                                             <Wind className="w-4 h-4" />
                                             <span className="text-xs font-bold">{t.fade_btn}</span>
+                                            {editingTarget?.hasFadeOut && (
+                                                <span className="text-[9px] font-mono opacity-80 border-l border-rose-500/50 pl-2 ml-1">
+                                                    {Math.round(editingTarget.fadeOutDuration || 5)}s
+                                                </span>
+                                            )}
                                         </button>
 
                                         {editingSfxIndex === null && (
@@ -1914,14 +1973,11 @@ const App: React.FC = () => {
                                   messages={chatMessages}
                                   onSendMessage={handleSendChatMessage}
                                   onEndCall={handleEndCall}
-                                  onCloseWindow={handleCloseChatWindow} // NEW PROP HANDLED
+                                  onCloseWindow={handleCloseChatWindow} // NEW PROP PASSED
                                   t={t}
                                   isPinned={chatPinned}
-                                  onTogglePin={(val) => { 
-                                      setChatPinned(val); 
-                                      if(!val && !notesPinned) setLeftPanelWidth(40); 
-                                  }} 
-                                  displayMode="docked"
+                                  onTogglePin={(val) => setChatPinned(val)}
+                                  displayMode="floating"
                                   connectedStatus={callStatus}
                                   onAnswerCall={handleAnswerCall}
                               />
@@ -1941,6 +1997,8 @@ const App: React.FC = () => {
                 onSeek={handleSeek}
                 onVolumeChange={(v) => requestVolumeChange(v)} 
                 onFade={() => requestManualFade()} 
+                onFadeConfig={() => setTimeEditModal({isOpen: true, type: 'fade_manual', value: globalFadeDuration})}
+                manualFadeDuration={Math.round(globalFadeDuration)} // PASS PROP
                 title={editingTarget ? (editingSfxIndex !== null ? (editingTarget as SfxItem).label : (editingTarget as Song).title) : t.no_track_title}
                 startTime={editingTarget?.trimStart || 0}
                 endTime={editingTarget?.trimEnd || 0}
@@ -1954,7 +2012,17 @@ const App: React.FC = () => {
 
       <ConfirmModal isOpen={confirmModal.isOpen} title={confirmModal.title} message={confirmModal.message} confirmText={confirmModal.confirmText} cancelText={confirmModal.cancelText} onConfirm={confirmModal.action} onCancel={() => setConfirmModal(prev => ({...prev, isOpen: false}))} />
       <SaveSuccessModal isOpen={saveSuccessModal.isOpen} fileName={saveSuccessModal.fileName} location={saveSuccessModal.location} title={t.saved_title} msgFileUpdated={t.file_updated} onClose={() => setSaveSuccessModal(prev => ({ ...prev, isOpen: false }))} />
-      <TimeEditModal isOpen={timeEditModal.isOpen} type={timeEditModal.type} initialValue={timeEditModal.value} onSave={handleModalSave} onClose={() => setTimeEditModal(prev => ({...prev, isOpen: false}))} t={t} />
+      
+      {/* UPDATE: Use TimeEditModal for Fade Config */}
+      <TimeEditModal 
+          isOpen={timeEditModal.isOpen} 
+          type={timeEditModal.type as any} // Cast to satisfy type definition
+          initialValue={timeEditModal.value} 
+          onSave={handleModalSave} 
+          onClose={() => setTimeEditModal(prev => ({...prev, isOpen: false}))} 
+          t={t} 
+      />
+      
       <NoteModal isOpen={noteModalOpen} initialValue={(editingTarget as Song)?.note || ''} onSave={(val) => { if (remoteSync.role === 'slave' && editingSfxIndex === null) { remoteSync.sendMasterCommand({ type: 'UPDATE_SONG', index: playlistState.currentIndex, isSfx: false, data: { ...editingTarget, note: val } }); } else { updateTargetItem(i => ({...i, note: val})); }}} onClose={() => setNoteModalOpen(false)} t={t} />
       <RawEditorModal isOpen={rawEditorOpen} initialContent={playlistActions.generatePlaylistContent()} onSave={handleRawSaveRequest} onClose={() => setRawEditorOpen(false)} t={t} />
       <RawEditorModal isOpen={logViewerOpen} initialContent={logContent} onSave={() => {}} onClose={() => setLogViewerOpen(false)} t={t} readOnly={true} title="File log della playlist" /> 

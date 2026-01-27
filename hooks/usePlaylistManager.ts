@@ -21,7 +21,10 @@ const generateContentString = (songs: Song[], sfxItems: SfxItem[]) => {
             const start = (s.trimStart || 0).toFixed(2);
             const end = (s.trimEnd || 0).toFixed(2);
             const gain = (s.customGain !== undefined ? s.customGain : 1.0).toFixed(2);
-            const fade = s.hasFadeOut ? '1' : '0';
+            
+            // FADE LOGIC: If hasFadeOut is true, store the Duration (e.g. "5.0"). If false, store "0".
+            // Legacy compat: "1" used to mean ON. Now we use float.
+            const fade = s.hasFadeOut ? (s.fadeOutDuration || 5).toFixed(1) : '0';
             
             // Handle Notes: If note exists, put a pointer [NOTE_N] in the CSV and append text at bottom
             let noteField = "";
@@ -45,7 +48,9 @@ const generateContentString = (songs: Song[], sfxItems: SfxItem[]) => {
            const start = (sfx.trimStart || 0).toFixed(2);
            const end = (sfx.trimEnd || 0).toFixed(2);
            const gain = (sfx.customGain !== undefined ? sfx.customGain : 1.0).toFixed(2);
-           const fade = sfx.hasFadeOut ? '1' : '0';
+           
+           // Same Fade Logic for SFX
+           const fade = sfx.hasFadeOut ? (sfx.fadeOutDuration || 5).toFixed(1) : '0';
            
            content += `SFX;${idx};${sfx.label};${path};${start};${end};${fade};${gain}\n`;
         }

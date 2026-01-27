@@ -11,6 +11,7 @@ export interface Song {
   trimStart?: number; // Seconds
   trimEnd?: number;   // Seconds
   hasFadeOut?: boolean;
+  fadeOutDuration?: number; // NEW: Custom duration in seconds
   customGain?: number; // 0.0 to 1.0 (default 1.0)
   note?: string; // Director's note
 }
@@ -26,6 +27,7 @@ export interface SfxItem {
   trimStart?: number;
   trimEnd?: number;
   hasFadeOut?: boolean;
+  fadeOutDuration?: number; // NEW
   customGain?: number;
 }
 
@@ -34,6 +36,7 @@ export interface PlayerState {
   currentTime: number;
   duration: number;
   volume: number;
+  isFading?: boolean; // NEW: Track manual fade state
 }
 
 export type AppMode = 'editing' | 'presentation';

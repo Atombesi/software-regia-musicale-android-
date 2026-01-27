@@ -1,3 +1,4 @@
+
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { PlayerState, Song, SfxItem } from '../types';
 import { shouldReloadAudioSource } from '../utils/platformUtils';
@@ -22,12 +23,14 @@ export const useAudioPlayer = ({
         currentTime: 0,
         duration: 0,
         volume: 1,
+        isFading: false // NEW
     });
 
     // --- REFS ---
     const audioRef = useRef<HTMLAudioElement | null>(null);
     const volumeRef = useRef<number>(1.0); 
     const fadeIntervalRef = useRef<any>(null);
+    const isHandlingEndRef = useRef(false); // NEW: Debounce lock for track end
     
     // Track ID to detect changes even if URL is same
     const currentTrackIdRef = useRef<string | null>(null);
@@ -50,7 +53,12 @@ export const useAudioPlayer = ({
 
     // --- INTERNAL HANDLER (Memoized) ---
     const handleTrackEndInternal = useCallback(() => {
-        setState(prev => ({ ...prev, isPlaying: false }));
+        // PREVENT DOUBLE FIRING: Lock execution for 500ms
+        if (isHandlingEndRef.current) return;
+        isHandlingEndRef.current = true;
+        setTimeout(() => { isHandlingEndRef.current = false; }, 500);
+
+        setState(prev => ({ ...prev, isPlaying: false, isFading: false }));
         if (audioRef.current) audioRef.current.pause();
         if (fadeIntervalRef.current) clearInterval(fadeIntervalRef.current);
         
@@ -89,7 +97,8 @@ export const useAudioPlayer = ({
                     ...prev, 
                     currentTime: start,
                     // If reloading, duration might be 0 until metadata loads, but we reset it to avoid stale duration
-                    duration: needsReload ? 0 : prev.duration
+                    duration: needsReload ? 0 : prev.duration,
+                    isFading: false
                 }));
 
                 // Reset Volume for new track (unless we want to persist global volume, but usually per-track gain applies)
@@ -110,7 +119,7 @@ export const useAudioPlayer = ({
             // No target
             audio.src = "";
             currentTrackIdRef.current = null;
-            setState(prev => ({ ...prev, currentTime: 0, duration: 0 }));
+            setState(prev => ({ ...prev, currentTime: 0, duration: 0, isFading: false }));
         }
     }, [targetItem, state.isPlaying, playbackSource]); 
 
@@ -154,7 +163,9 @@ export const useAudioPlayer = ({
                 if (targetItem) {
                     const start = targetItem.trimStart || 0;
                     const end = (targetItem.trimEnd && targetItem.trimEnd > 0) ? targetItem.trimEnd : audio.duration;
-                    const fadeDuration = 3; 
+                    
+                    // CUSTOM FADE DURATION OR DEFAULT 3s
+                    const fadeDuration = targetItem.fadeOutDuration || 3; 
 
                     // 1. Check End
                     if (t >= end - 0.05) {
@@ -207,12 +218,12 @@ export const useAudioPlayer = ({
     }, []);
 
     const pause = useCallback(() => {
-        setState(prev => ({ ...prev, isPlaying: false }));
+        setState(prev => ({ ...prev, isPlaying: false, isFading: false }));
         if (fadeIntervalRef.current) clearInterval(fadeIntervalRef.current);
     }, []);
 
     const stop = useCallback(() => {
-        setState(prev => ({ ...prev, isPlaying: false }));
+        setState(prev => ({ ...prev, isPlaying: false, isFading: false }));
         if (fadeIntervalRef.current) clearInterval(fadeIntervalRef.current);
 
         if(audioRef.current) {
@@ -256,13 +267,16 @@ export const useAudioPlayer = ({
         }
     }, []);
 
-    const manualFade = useCallback(() => {
+    const manualFade = useCallback((durationMs: number = 2500) => {
         const audio = audioRef.current;
         if (!audio || audio.paused) return;
         
         if (fadeIntervalRef.current) clearInterval(fadeIntervalRef.current);
 
-        const fadeDuration = 2500; // 2.5s
+        // SET FADING STATE
+        setState(prev => ({ ...prev, isFading: true }));
+
+        const fadeDuration = durationMs; 
         const stepTime = 50; 
         const steps = fadeDuration / stepTime;
         const volStep = audio.volume / steps;
@@ -274,7 +288,8 @@ export const useAudioPlayer = ({
                 audio.volume = 0;
                 audio.pause();
                 clearInterval(fadeIntervalRef.current);
-                setState(prev => ({...prev, isPlaying: false, volume: 0}));
+                // RESET FADING STATE
+                setState(prev => ({...prev, isPlaying: false, volume: 0, isFading: false}));
                 volumeRef.current = 0;
                 handleTrackEndInternal();
             }
@@ -287,12 +302,13 @@ export const useAudioPlayer = ({
 
     const hardReset = useCallback(() => {
         if (fadeIntervalRef.current) clearInterval(fadeIntervalRef.current);
+        isHandlingEndRef.current = false; // Reset lock
         if(audioRef.current) {
             audioRef.current.pause();
             audioRef.current.currentTime = 0;
         }
         currentTrackIdRef.current = null; // Force reset ID tracking
-        setState(prev => ({ ...prev, isPlaying: false, currentTime: 0 }));
+        setState(prev => ({ ...prev, isPlaying: false, currentTime: 0, isFading: false }));
     }, []);
 
     return {

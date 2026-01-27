@@ -1,5 +1,6 @@
+
 import React from 'react';
-import { Play, Pause, SkipBack, SkipForward, Volume2, VolumeX, Wind, Square } from 'lucide-react';
+import { Play, Pause, SkipBack, SkipForward, Volume2, VolumeX, Wind, Square, Settings } from 'lucide-react';
 import { PlayerState, AppMode, Language } from '../types';
 import { translations } from '../translations';
 
@@ -8,16 +9,18 @@ interface PlayerControlsProps {
   onPlayPause: () => void;
   onNext: () => void;
   onPrev: () => void;
-  onStop: () => void; // New prop
+  onStop: () => void; 
   onSeek: (time: number) => void;
   onVolumeChange: (vol: number) => void;
   onFade: () => void;
+  onFadeConfig?: () => void;
+  manualFadeDuration?: number; // NEW PROP
   title: string;
   startTime: number;
   endTime: number;
-  appMode?: AppMode; // Optional to keep backward compatibility if needed, but App provides it
+  appMode?: AppMode;
   language: Language;
-  readOnly?: boolean; // NEW: Controls locked state
+  readOnly?: boolean;
 }
 
 const formatTime = (time: number) => {
@@ -36,6 +39,8 @@ const PlayerControls: React.FC<PlayerControlsProps> = ({
   onSeek,
   onVolumeChange,
   onFade,
+  onFadeConfig,
+  manualFadeDuration = 3, // Default value
   title,
   startTime,
   endTime,
@@ -163,18 +168,35 @@ const PlayerControls: React.FC<PlayerControlsProps> = ({
       {/* Volume & Extras (Right) */}
       <div className="w-1/4 hidden md:flex justify-end items-center gap-4 pl-2">
         
-        {/* Fade Button */}
-        <button 
-            onClick={onFade}
-            disabled={!state.isPlaying || readOnly}
-            className="flex flex-col items-center gap-1 group disabled:opacity-30 disabled:cursor-not-allowed shrink-0"
-            title={t.fade_pause_tooltip}
-        >
-            <div className="p-2 rounded-full bg-slate-800 border border-slate-700 group-hover:border-emerald-500 group-hover:text-emerald-400 transition-all">
-                <Wind className="w-4 h-4" />
-            </div>
-            <span className="text-[9px] font-bold uppercase tracking-wider text-slate-500 group-hover:text-emerald-400">{t.fade_btn}</span>
-        </button>
+        {/* Fade Button Group */}
+        <div className="flex items-center gap-1 bg-slate-800 rounded-full p-1 border border-slate-700 relative">
+            <button 
+                onClick={onFade}
+                disabled={!state.isPlaying || readOnly}
+                className={`flex flex-col items-center justify-center w-10 h-10 rounded-full transition-all relative disabled:opacity-30 disabled:cursor-not-allowed
+                    ${state.isFading 
+                        ? 'bg-red-500/20 text-red-400 border border-red-500/50 shadow-[0_0_15px_rgba(239,68,68,0.3)] animate-pulse' 
+                        : 'hover:bg-slate-700 group'
+                    }`}
+                title={t.fade_pause_tooltip}
+            >
+                <Wind className={`w-4 h-4 transition-colors ${state.isFading ? 'text-red-400' : 'text-slate-400 group-hover:text-emerald-400'}`} />
+                {/* Visual Indicator of Seconds */}
+                <span className={`absolute -top-2 -left-1 text-[8px] px-1 rounded-full border font-mono ${state.isFading ? 'bg-red-900/80 text-red-200 border-red-500/50' : 'bg-slate-950 text-emerald-400 border-slate-700'}`}>
+                    {Math.round(manualFadeDuration)}s
+                </span>
+            </button>
+            {onFadeConfig && (
+                <button
+                    onClick={onFadeConfig}
+                    className="flex flex-col items-center justify-center w-8 h-8 rounded-full hover:bg-slate-700 text-slate-500 hover:text-white transition-colors disabled:opacity-30"
+                    title="Configura durata Fade"
+                    disabled={readOnly}
+                >
+                    <Settings className="w-3 h-3" />
+                </button>
+            )}
+        </div>
 
         <div className="h-8 w-px bg-slate-800 mx-1"></div>
 
