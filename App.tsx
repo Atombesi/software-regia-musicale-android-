@@ -17,15 +17,16 @@ import {
     isElectron,
     extractFileName,
     formatPathForSaving,
-    normalizePath
+    normalizePath,
+    isAndroidPlatform
 } from './utils/platformUtils';
 import { useAudioPlayer } from './hooks/useAudioPlayer';
 import { usePlaylistManager } from './hooks/usePlaylistManager';
 import { useShowLogger } from './hooks/useShowLogger'; 
 import { useRemoteSync } from './hooks/useRemoteSync'; 
-import { writeTextFile, readTextFile, addPlaylistToHistory } from './utils/filesystemUtils'; 
+import { writeTextFile, readTextFile, addPlaylistToHistory, saveDownloadedAssetUniversal } from './utils/filesystemUtils'; 
 import { EstraiName, EstraiPath } from './utils/windowsFileUtils'; 
-import { checkLocalAsset } from './utils/androidFileUtils';
+import { checkLocalAsset, ASSETS_FOLDER } from './utils/androidFileUtils';
 import { AppGlobals } from './globals'; 
 
 // --- IMPORT MODALS ---
@@ -40,7 +41,7 @@ import NetworkModal from './components/modals/NetworkModal';
 import ChatModal from './components/modals/ChatModal'; 
 import RenameModal from './components/modals/RenameModal';
 
-export const APP_VERSION = "Ver 2.7.3";
+export const APP_VERSION = "Ver 2.7.4";
 
 const App: React.FC = () => {
   // LANGUAGE STATE
@@ -238,6 +239,13 @@ const App: React.FC = () => {
   
   // STATE: Store remote master path for download
   const [remoteMasterPath, setRemoteMasterPath] = useState<string | undefined>(undefined);
+
+  // --- DOWNLOAD STATE (Moved from NetworkModal) ---
+  const [isDownloading, setIsDownloading] = useState(false);
+  const [downloadProgress, setDownloadProgress] = useState(0); 
+  const [downloadStatusText, setDownloadStatusText] = useState("");
+  const [errorDetails, setErrorDetails] = useState<string[]>([]);
+  const [showErrorDialog, setShowErrorDialog] = useState(false);
 
   const waveSeekRequestRef = useRef<number | null>(null);
   const localSaveBtnRef = useRef<HTMLButtonElement>(null);
@@ -615,10 +623,16 @@ const App: React.FC = () => {
   }, [playlistActions]);
 
   const handleRemoteState = useCallback((state: any) => {
+      // SLAVE: SYNC FADE CONFIG & STATE
+      if (state.fadeDuration !== undefined) {
+          setGlobalFadeDuration(state.fadeDuration);
+      }
+
       audioControls.updateState({
           currentTime: state.currentTime,
           isPlaying: state.isPlaying,
-          volume: state.volume 
+          volume: state.volume,
+          isFading: state.isFading // SYNC RED BUTTON STATE
       });
       if (state.currentIndex !== undefined && state.currentIndex !== playlistState.currentIndex) {
           playlistActions.setCurrentIndex(state.currentIndex);
@@ -726,18 +740,215 @@ const App: React.FC = () => {
                   appMode: appMode,
                   // SYNC INFO
                   showDuration: currentDuration,
-                  isShowEnded: !!showEndTime
+                  isShowEnded: !!showEndTime,
+                  // SYNC FADE INFO (NEW)
+                  fadeDuration: globalFadeDuration,
+                  isFading: playerState.isFading
               });
           }, 200); 
           return () => clearInterval(interval);
       }
-  }, [remoteSync.role, playerState.isPlaying, playerState.currentTime, playerState.volume, playlistState.currentIndex, appMode, showEndTime]);
+  }, [remoteSync.role, playerState.isPlaying, playerState.currentTime, playerState.volume, playlistState.currentIndex, appMode, showEndTime, globalFadeDuration, playerState.isFading]);
 
   useEffect(() => {
       if (remoteSync.role === 'master' && remoteSync.clientCount > 0 && playlistState.songs.length > 0) {
           remoteSync.sendPlaylist(playlistState.songs, playlistState.sfxItems, playlistState.sourceFilePath || undefined);
       }
   }, [remoteSync.clientCount, remoteSync.role, playlistState.songs, playlistState.sfxItems, playlistState.sourceFilePath]);
+
+  // --- DOWNLOAD MANAGER (MOVED FROM NETWORK MODAL) ---
+  const handleDownloadMedia = async () => {
+        if (!remoteSync.connectedIP) return;
+        setIsDownloading(true);
+        setDownloadProgress(0);
+        setErrorDetails([]); 
+        setShowErrorDialog(false);
+        setNetworkModalOpen(true); // Ensure modal is open to show progress
+        
+        const allItems = [...playlistState.songs, ...playlistState.sfxItems.filter(s => s && s.url)];
+        const total = allItems.length + (remoteMasterPath ? 1 : 0);
+        
+        if (total === 0) {
+            setDownloadStatusText("Nessun file da scaricare.");
+            setIsDownloading(false);
+            return;
+        }
+
+        let completed = 0;
+        const errors: string[] = [];
+
+        // --- WINDOWS SPECIFIC LOGIC ---
+        if (!isAndroidPlatform()) {
+            const electron = (window as any).electronAPI;
+            if (electron) {
+                try {
+                    const downloadDir = await electron.getPath('downloads');
+                    const targetDir = `${downloadDir.replace(/\\/g, '/')}/RegiaMusiche_Client`;
+                    await electron.createDir(targetDir);
+                    
+                    const remappedSongs = playlistState.songs.map(s => ({...s})); 
+                    const remappedSfx = playlistState.sfxItems.map(s => s ? {...s} : undefined); 
+
+                    for (const item of allItems) {
+                        if (!item || !item.originalFileName) continue;
+                        const fileName = item.originalFileName;
+                        const localFullPath = `${targetDir}/${fileName}`;
+                        setDownloadStatusText(`${t.download_progress} ${fileName}`);
+                        let masterUrl = ""; 
+
+                        try {
+                            masterUrl = `http://${remoteSync.connectedIP}:8081/stream?path=${encodeURIComponent(item.path || "")}`;
+                            const response = await fetch(masterUrl);
+                            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                            const blob = await response.blob();
+                            
+                            const base64 = await new Promise<string>((resolve, reject) => {
+                                const reader = new FileReader();
+                                reader.onloadend = () => resolve((reader.result as string).split(',')[1]);
+                                reader.onerror = reject;
+                                reader.readAsDataURL(blob);
+                            });
+
+                            await electron.writeBinary(localFullPath, base64);
+
+                            // REMAP IN MEMORY
+                            remappedSongs.forEach(s => {
+                                if (s.id === item.id) {
+                                    s.path = localFullPath; 
+                                    s.url = `file:///${localFullPath}`; 
+                                }
+                            });
+                            remappedSfx.forEach(s => {
+                                if (s && s.id === item.id) {
+                                    s.path = localFullPath;
+                                    s.url = `file:///${localFullPath}`;
+                                }
+                            });
+
+                        } catch (e: any) {
+                            console.error(`Error downloading ${fileName}`, e);
+                            errors.push(`FILE: ${fileName}\nURL: ${masterUrl}\nORIG_PATH: ${item.path}\nDEST: ${localFullPath}\nERR: ${e.message}`);
+                        }
+                        
+                        completed++;
+                        setDownloadProgress(Math.round((completed / total) * 100));
+                    }
+
+                    if (remoteMasterPath) {
+                        try {
+                            const playlistName = extractFileName(remoteMasterPath);
+                            const masterUrl = `http://${remoteSync.connectedIP}:8081/stream?path=${encodeURIComponent(remoteMasterPath)}`;
+                            const response = await fetch(masterUrl);
+                            if (response.ok) {
+                                const text = await response.text();
+                                await electron.writeFile(`${targetDir}/${playlistName}`, text);
+                            }
+                        } catch (e) {}
+                        completed++;
+                        setDownloadProgress(Math.round((completed / total) * 100));
+                    }
+
+                    setIsDownloading(false);
+                    if (errors.length > 0) {
+                        setDownloadStatusText(`${t.download_error}: ${errors.length} files failed.`);
+                        setErrorDetails([`TARGET FOLDER: ${targetDir}`, ...errors]);
+                        setShowErrorDialog(true);
+                    } else {
+                        setDownloadStatusText(t.download_complete);
+                        handleReloadAssets(remappedSongs, remappedSfx as SfxItem[]);
+                    }
+                    return;
+
+                } catch (mainErr: any) {
+                    setIsDownloading(false);
+                    setErrorDetails([`INIT ERROR: ${mainErr.message}`]);
+                    setShowErrorDialog(true);
+                    return;
+                }
+            }
+        }
+
+        // --- ANDROID LOGIC ---
+        if (remoteMasterPath) {
+            const playlistName = extractFileName(remoteMasterPath);
+            setDownloadStatusText(`Scaricamento Playlist: ${playlistName}`);
+            try {
+                const masterUrl = `http://${remoteSync.connectedIP}:8081/stream?path=${encodeURIComponent(remoteMasterPath)}`;
+                const response = await fetch(masterUrl);
+                if (!response.ok) throw new Error("Server response " + response.status);
+                const textContent = await response.text();
+                if(isAndroidPlatform()) {
+                     await writeTextFile(`${ASSETS_FOLDER}/${playlistName}`, playlistName, textContent, Directory.External);
+                } 
+            } catch (e: any) {
+                console.error(`Error downloading playlist ${playlistName}`, e);
+                errors.push(`PLAYLIST: ${playlistName}\nPATH: ${remoteMasterPath}\nERR: ${e.message}`);
+            }
+            completed++;
+            setDownloadProgress(Math.round((completed / total) * 100));
+        }
+
+        for (const item of allItems) {
+            if (!item || !item.originalFileName) continue;
+            const fileName = item.originalFileName;
+            setDownloadStatusText(`${t.download_progress} ${fileName}`);
+
+            try {
+                let exists = false;
+                if(isAndroidPlatform()) {
+                    exists = (await checkLocalAsset(fileName)) !== null;
+                }
+                
+                if (!exists) {
+                    const masterUrl = `http://${remoteSync.connectedIP}:8081/stream?path=${encodeURIComponent(item.path || "")}`;
+                    const response = await fetch(masterUrl);
+                    if (!response.ok) throw new Error("Server response " + response.status);
+                    const blob = await response.blob();
+                    const base64 = await new Promise<string>((resolve, reject) => {
+                        const reader = new FileReader();
+                        reader.onloadend = () => {
+                            const res = reader.result as string;
+                            const base64Raw = res.split(',')[1];
+                            resolve(base64Raw);
+                        };
+                        reader.onerror = reject;
+                        reader.readAsDataURL(blob);
+                    });
+                    await saveDownloadedAssetUniversal(fileName, base64);
+                }
+            } catch (e: any) {
+                console.error(`Error downloading ${fileName}`, e);
+                errors.push(`FILE: ${fileName}\nREMOTE PATH: ${item.path}\nERR: ${e.message}`);
+            }
+            completed++;
+            setDownloadProgress(Math.round((completed / total) * 100));
+        }
+
+        setIsDownloading(false);
+        if (errors.length > 0) {
+             setDownloadStatusText(`${t.download_error}: ${errors.length} files failed.`);
+             setErrorDetails(errors);
+             setShowErrorDialog(true);
+        } else {
+             setDownloadStatusText(t.download_complete);
+             handleReloadAssets();
+        }
+  };
+
+  // --- AUTO DOWNLOAD WATCHER ---
+  const prevReadOnly = useRef(remoteSync.isReadOnly);
+  useEffect(() => {
+      // If we transition from ReadOnly(Locked) -> Full Control(Unlocked) AND we are a Slave
+      if (prevReadOnly.current === true && remoteSync.isReadOnly === false && remoteSync.role === 'slave') {
+          // AND we have media to download
+          if (playlistState.songs.length > 0) {
+              console.log("Auto-starting download due to permission grant...");
+              handleDownloadMedia();
+          }
+      }
+      prevReadOnly.current = remoteSync.isReadOnly;
+  }, [remoteSync.isReadOnly, remoteSync.role, playlistState.songs]);
+
 
   const handleStartCall = () => {
       if (callStatus === 'idle') {
@@ -1559,6 +1770,14 @@ const App: React.FC = () => {
                 onChangeClientPin={(val) => { setClientPin(val); saveSettings({ clientPin: val }); }}
                 serverPin={serverPin}
                 clientName={clientName}
+                // PASS DOWNLOAD STATE & HANDLERS
+                isDownloading={isDownloading}
+                downloadProgress={downloadProgress}
+                downloadStatusText={downloadStatusText}
+                errorDetails={errorDetails}
+                showErrorDialog={showErrorDialog}
+                onDownloadRequest={handleDownloadMedia}
+                onCloseErrorDialog={() => setShowErrorDialog(false)}
             />
             <SettingsModal 
                 isOpen={settingsModalOpen} 
@@ -2067,6 +2286,14 @@ const App: React.FC = () => {
           sfx={playlistState.sfxItems} 
           masterFilePath={remoteSyncPath} 
           onAssetsUpdated={handleReloadAssets} // UPDATED HANDLER
+          // PASS DOWNLOAD STATE & HANDLERS
+          isDownloading={isDownloading}
+          downloadProgress={downloadProgress}
+          downloadStatusText={downloadStatusText}
+          errorDetails={errorDetails}
+          showErrorDialog={showErrorDialog}
+          onDownloadRequest={handleDownloadMedia}
+          onCloseErrorDialog={() => setShowErrorDialog(false)}
       /> 
       <RenameModal 
           isOpen={renameModal.isOpen}
