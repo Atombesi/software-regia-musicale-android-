@@ -1,47 +1,47 @@
+
 import React, { useState, useEffect } from 'react';
 import { Wifi, Server, Smartphone, Monitor, CheckCircle2, XCircle, Loader2, Network, X, History, DownloadCloud, Lock, UserCircle, Trash2, Power, MessageSquare, AlertTriangle, FileWarning } from 'lucide-react';
 import { RemoteSyncHook } from '../../hooks/useRemoteSync';
 import { isAndroidPlatform, extractFileName } from '../../utils/platformUtils';
 import { Song, SfxItem } from '../../types';
-import { checkLocalAsset, ASSETS_FOLDER } from '../../utils/androidFileUtils';
-import { writeTextFile, saveDownloadedAssetUniversal } from '../../utils/filesystemUtils';
-import { Directory } from '@capacitor/filesystem';
 
 interface NetworkModalProps {
     isOpen: boolean;
     onClose: () => void;
     sync: RemoteSyncHook;
     t: any;
-    // NEW PROPS FOR DOWNLOAD
+    // NEW PROPS FOR DOWNLOAD (PASSED FROM APP)
     songs?: Song[];
     sfx?: SfxItem[];
-    masterFilePath?: string; // PATH OF THE PLAYLIST FILE ON MASTER
-    onAssetsUpdated?: (songs?: Song[], sfx?: SfxItem[]) => void; // MODIFIED SIGNATURE
+    masterFilePath?: string; 
+    onAssetsUpdated?: (songs?: Song[], sfx?: SfxItem[]) => void;
     
     // SECURITY PROPS
     clientPin?: string;
     onChangeClientPin?: (val: string) => void;
-    serverPin?: string; // For starting server
-    clientName?: string; // For connecting
+    serverPin?: string; 
+    clientName?: string; 
+
+    // DOWNLOAD UI PROPS
+    isDownloading?: boolean;
+    downloadProgress?: number;
+    downloadStatusText?: string;
+    errorDetails?: string[];
+    showErrorDialog?: boolean;
+    onDownloadRequest?: () => void;
+    onCloseErrorDialog?: () => void;
 }
 
 const NetworkModal: React.FC<NetworkModalProps> = ({ 
     isOpen, onClose, sync, t, songs = [], sfx = [], masterFilePath, onAssetsUpdated,
-    clientPin = "", onChangeClientPin, serverPin = "", clientName = ""
+    clientPin = "", onChangeClientPin, serverPin = "", clientName = "",
+    // DOWNLOAD PROPS
+    isDownloading = false, downloadProgress = 0, downloadStatusText = "", errorDetails = [], showErrorDialog = false, onDownloadRequest, onCloseErrorDialog
 }) => {
     const [activeTab, setActiveTab] = useState<'server' | 'client'>(isAndroidPlatform() ? 'client' : 'server');
     const [inputIP, setInputIP] = useState("");
     const [savedIPs, setSavedIPs] = useState<string[]>([]);
     
-    // Download State
-    const [isDownloading, setIsDownloading] = useState(false);
-    const [downloadProgress, setDownloadProgress] = useState(0); // 0-100
-    const [downloadStatusText, setDownloadStatusText] = useState("");
-    
-    // Error Reporting State
-    const [errorDetails, setErrorDetails] = useState<string[]>([]);
-    const [showErrorDialog, setShowErrorDialog] = useState(false);
-
     useEffect(() => {
         // Load IP history
         const loaded = localStorage.getItem('regia_ip_history');
@@ -63,219 +63,6 @@ const NetworkModal: React.FC<NetworkModalProps> = ({
             localStorage.setItem('regia_ip_history', JSON.stringify(newHistory));
         }
     }, [sync.status, sync.role, sync.connectedIP]);
-
-    const handleDownloadMedia = async () => {
-        if (!sync.connectedIP) return;
-        setIsDownloading(true);
-        setDownloadProgress(0);
-        setErrorDetails([]); // Reset errors
-        setShowErrorDialog(false);
-        
-        const allItems = [...songs, ...sfx.filter(s => s && s.url)];
-        const total = allItems.length + (masterFilePath ? 1 : 0);
-        
-        if (total === 0) {
-            setDownloadStatusText("Nessun file da scaricare.");
-            setIsDownloading(false);
-            return;
-        }
-
-        let completed = 0;
-        const errors: string[] = [];
-
-        // --- WINDOWS SPECIFIC LOGIC ---
-        if (!isAndroidPlatform()) {
-            const electron = (window as any).electronAPI;
-            if (electron) {
-                try {
-                    // 1. Determine Target Path: Downloads/RegiaMusiche_Client
-                    const downloadDir = await electron.getPath('downloads');
-                    // Force using forward slashes for internal consistency in JS, Electron/Node handles OS path seps
-                    const targetDir = `${downloadDir.replace(/\\/g, '/')}/RegiaMusiche_Client`;
-                    
-                    // 2. Create Directory
-                    await electron.createDir(targetDir);
-                    
-                    // Arrays to hold the remapped items
-                    const remappedSongs = songs.map(s => ({...s})); // Clone
-                    const remappedSfx = sfx.map(s => s ? {...s} : undefined); // Clone
-
-                    // 3. Loop and Download
-                    for (const item of allItems) {
-                        if (!item || !item.originalFileName) continue;
-                        const fileName = item.originalFileName;
-                        
-                        // Path on local disk
-                        const localFullPath = `${targetDir}/${fileName}`;
-                        
-                        setDownloadStatusText(`${t.download_progress} ${fileName}`);
-
-                        let masterUrl = ""; // Init here for scope visibility in catch
-
-                        try {
-                            // Download from Master
-                            masterUrl = `http://${sync.connectedIP}:8081/stream?path=${encodeURIComponent(item.path || "")}`;
-                            const response = await fetch(masterUrl);
-                            if (!response.ok) throw new Error(`HTTP ${response.status}`);
-                            const blob = await response.blob();
-                            
-                            // Convert to Base64
-                            const base64 = await new Promise<string>((resolve, reject) => {
-                                const reader = new FileReader();
-                                reader.onloadend = () => resolve((reader.result as string).split(',')[1]);
-                                reader.onerror = reject;
-                                reader.readAsDataURL(blob);
-                            });
-
-                            // Write to Disk
-                            await electron.writeBinary(localFullPath, base64);
-
-                            // REMAP IN MEMORY
-                            // Update Song references
-                            remappedSongs.forEach(s => {
-                                if (s.id === item.id) {
-                                    s.path = localFullPath; // Real absolute path on Windows
-                                    s.url = `file:///${localFullPath}`; // URL for Audio Player
-                                }
-                            });
-                            // Update SFX references
-                            remappedSfx.forEach(s => {
-                                if (s && s.id === item.id) {
-                                    s.path = localFullPath;
-                                    s.url = `file:///${localFullPath}`;
-                                }
-                            });
-
-                        } catch (e: any) {
-                            console.error(`Error downloading ${fileName}`, e);
-                            // ENHANCED DEBUG LOGGING
-                            errors.push(`FILE: ${fileName}\nURL: ${masterUrl}\nORIG_PATH: ${item.path}\nDEST: ${localFullPath}\nERR: ${e.message}`);
-                        }
-                        
-                        completed++;
-                        setDownloadProgress(Math.round((completed / total) * 100));
-                    }
-
-                    // Download Playlist File (Optional/Backup)
-                    if (masterFilePath) {
-                        try {
-                            const playlistName = extractFileName(masterFilePath);
-                            const masterUrl = `http://${sync.connectedIP}:8081/stream?path=${encodeURIComponent(masterFilePath)}`;
-                            const response = await fetch(masterUrl);
-                            if (response.ok) {
-                                const text = await response.text();
-                                await electron.writeFile(`${targetDir}/${playlistName}`, text);
-                            }
-                        } catch (e) {}
-                        completed++;
-                        setDownloadProgress(Math.round((completed / total) * 100));
-                    }
-
-                    setIsDownloading(false);
-                    if (errors.length > 0) {
-                        setDownloadStatusText(`${t.download_error}: ${errors.length} files failed.`);
-                        setErrorDetails([`TARGET FOLDER: ${targetDir}`, ...errors]);
-                        setShowErrorDialog(true);
-                    } else {
-                        setDownloadStatusText(t.download_complete);
-                        // TRIGGER REMAP IN APP
-                        if (onAssetsUpdated) onAssetsUpdated(remappedSongs, remappedSfx as SfxItem[]);
-                    }
-                    return; // EXIT FUNCTION FOR WINDOWS
-
-                } catch (mainErr: any) {
-                    setIsDownloading(false);
-                    setErrorDetails([`INIT ERROR: ${mainErr.message}`]);
-                    setShowErrorDialog(true);
-                    return;
-                }
-            }
-        }
-
-        // --- ANDROID LOGIC (EXISTING) ---
-        // 1. DOWNLOAD PLAYLIST FILE (.txt)
-        if (masterFilePath) {
-            const playlistName = extractFileName(masterFilePath);
-            setDownloadStatusText(`Scaricamento Playlist: ${playlistName}`);
-            try {
-                const masterUrl = `http://${sync.connectedIP}:8081/stream?path=${encodeURIComponent(masterFilePath)}`;
-                const response = await fetch(masterUrl);
-                if (!response.ok) throw new Error("Server response " + response.status);
-                
-                const textContent = await response.text();
-                
-                if(isAndroidPlatform()) {
-                     await writeTextFile(`${ASSETS_FOLDER}/${playlistName}`, playlistName, textContent, Directory.External);
-                } 
-                
-            } catch (e: any) {
-                console.error(`Error downloading playlist ${playlistName}`, e);
-                errors.push(`PLAYLIST: ${playlistName}\nPATH: ${masterFilePath}\nERR: ${e.message}`);
-            }
-            completed++;
-            setDownloadProgress(Math.round((completed / total) * 100));
-        }
-
-        // 2. DOWNLOAD MEDIA ASSETS
-        for (const item of allItems) {
-            if (!item || !item.originalFileName) continue;
-            
-            const fileName = item.originalFileName;
-            setDownloadStatusText(`${t.download_progress} ${fileName}`);
-
-            try {
-                // 1. Check if exists locally (Optimization for Android)
-                let exists = false;
-                if(isAndroidPlatform()) {
-                    exists = (await checkLocalAsset(fileName)) !== null;
-                }
-                
-                if (exists) {
-                    // Skip download
-                } else {
-                    // 2. Download from Master HTTP Server (Port 8081)
-                    const masterUrl = `http://${sync.connectedIP}:8081/stream?path=${encodeURIComponent(item.path || "")}`;
-                    
-                    const response = await fetch(masterUrl);
-                    if (!response.ok) throw new Error("Server response " + response.status);
-                    
-                    const blob = await response.blob();
-                    
-                    // Convert to Base64
-                    const base64 = await new Promise<string>((resolve, reject) => {
-                        const reader = new FileReader();
-                        reader.onloadend = () => {
-                            const res = reader.result as string;
-                            const base64Raw = res.split(',')[1];
-                            resolve(base64Raw);
-                        };
-                        reader.onerror = reject;
-                        reader.readAsDataURL(blob);
-                    });
-
-                    // 3. Save to Assets (Universal)
-                    await saveDownloadedAssetUniversal(fileName, base64);
-                }
-            } catch (e: any) {
-                console.error(`Error downloading ${fileName}`, e);
-                errors.push(`FILE: ${fileName}\nREMOTE PATH: ${item.path}\nERR: ${e.message}`);
-            }
-
-            completed++;
-            setDownloadProgress(Math.round((completed / total) * 100));
-        }
-
-        setIsDownloading(false);
-        if (errors.length > 0) {
-             setDownloadStatusText(`${t.download_error}: ${errors.length} files failed.`);
-             setErrorDetails(errors);
-             setShowErrorDialog(true);
-        } else {
-             setDownloadStatusText(t.download_complete);
-             // Trigger App refresh
-             if (onAssetsUpdated) onAssetsUpdated();
-        }
-    };
 
     const handleKick = (clientId: string, clientName: string) => {
         if (window.confirm(`Sei sicuro di voler disconnettere ${clientName}?`)) {
@@ -315,7 +102,7 @@ const NetworkModal: React.FC<NetworkModalProps> = ({
                         </div>
                         <div className="p-4 border-t border-slate-800 shrink-0">
                             <button 
-                                onClick={() => setShowErrorDialog(false)}
+                                onClick={onCloseErrorDialog}
                                 className="w-full py-3 bg-slate-800 hover:bg-slate-700 text-white rounded-xl font-bold transition-colors border border-slate-600"
                             >
                                 Chiudi Report
@@ -540,7 +327,7 @@ const NetworkModal: React.FC<NetworkModalProps> = ({
                                      )}
 
                                      {/* DOWNLOAD SECTION (Only if tracks present) */}
-                                     {songs.length > 0 && (
+                                     {songs.length > 0 && onDownloadRequest && (
                                          <div className="bg-slate-800/50 rounded-xl p-3 border border-slate-700/50">
                                               <p className="text-[10px] text-slate-500 mb-2 leading-tight">{t.download_info}</p>
                                               
@@ -556,7 +343,7 @@ const NetworkModal: React.FC<NetworkModalProps> = ({
                                                   </div>
                                               ) : (
                                                   <button 
-                                                    onClick={handleDownloadMedia}
+                                                    onClick={onDownloadRequest}
                                                     className="w-full py-2 bg-slate-700 hover:bg-slate-600 text-indigo-300 rounded-lg font-bold text-xs flex items-center justify-center gap-2 border border-slate-600 hover:border-indigo-500 transition-colors"
                                                   >
                                                       <DownloadCloud className="w-4 h-4" /> {t.btn_download_media}
@@ -566,7 +353,7 @@ const NetworkModal: React.FC<NetworkModalProps> = ({
                                               
                                               {errorDetails.length > 0 && !isDownloading && (
                                                   <button 
-                                                      onClick={() => setShowErrorDialog(true)}
+                                                      onClick={onCloseErrorDialog} // Reusing close handler to re-open error dialog if needed is managed by parent state, here simply triggers callback
                                                       className="mt-2 text-[10px] text-red-300 underline hover:text-white"
                                                   >
                                                       Visualizza Dettagli Errori ({errorDetails.length})

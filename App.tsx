@@ -40,7 +40,7 @@ import NetworkModal from './components/modals/NetworkModal';
 import ChatModal from './components/modals/ChatModal'; 
 import RenameModal from './components/modals/RenameModal';
 
-export const APP_VERSION = "Ver 2.7.1";
+export const APP_VERSION = "Ver 2.7.3";
 
 const App: React.FC = () => {
   // LANGUAGE STATE
@@ -358,6 +358,32 @@ const App: React.FC = () => {
       onTrackEnd: handleTrackEnd,
       isAndroid
   });
+
+  // --- NEW: REPOSITIONING HANDLER ---
+  const handleRepositionRequest = (index: number) => {
+      if (playerState.isPlaying) {
+          // If playing, we log the attempt but do NOT perform action
+          logEvent("Tentativo Riposizionamento", "Negato: Riproduzione in corso", true);
+          return;
+      }
+
+      setConfirmModal({
+          isOpen: true,
+          title: t.reposition_title,
+          message: t.reposition_msg.replace('{song}', playlistState.songs[index].title),
+          confirmText: t.btn_confirm,
+          cancelText: t.btn_cancel,
+          action: () => {
+              // 1. Move Index
+              playlistActions.setCurrentIndex(index);
+              // 2. Clear Played Status for this and future
+              playlistActions.rewindPlayedStatus(index);
+              // 3. Log
+              logEvent("Riposizionamento Manuale", `Salto alla traccia ${index + 1}: ${playlistState.songs[index].title}`, true);
+              setConfirmModal(prev => ({...prev, isOpen: false}));
+          }
+      });
+  };
 
   const performPlay = useCallback((source: 'local' | 'remote' = 'local') => {
       if (hasTarget && (editingTarget as Song).type !== 'separator') {
@@ -1629,6 +1655,8 @@ const App: React.FC = () => {
                         if (!newVal && !chatPinned) setLeftPanelWidth(40);
                     }}
                     isNotesPinned={notesPinned}
+                    // PASS REPOSITION HANDLER
+                    onRepositionRequest={handleRepositionRequest}
                 />
               </div>
 
@@ -1794,17 +1822,17 @@ const App: React.FC = () => {
                                             <span className="font-mono text-xs w-10 text-center text-indigo-400 font-bold">{Math.round((editingTarget?.customGain || 1)*100)}%</span>
                                         </div>
 
-                                        {/* NEW: FADE TOGGLE WITH CONFIG */}
+                                        {/* MODIFIED FADE BUTTON */}
                                         <button 
                                             onClick={handleToggleFade}
                                             className={`h-10 px-4 rounded-lg border flex items-center gap-2 transition-all ${editingTarget?.hasFadeOut ? 'bg-rose-900/40 border-rose-500 text-rose-400' : 'bg-slate-900 border-slate-700 text-slate-500 opacity-60'}`}
-                                            title="Attiva/Disattiva Fade Out (Apre configurazione se attivo)"
+                                            title={editingTarget?.hasFadeOut ? `Fade attivo: ${editingTarget.fadeOutDuration || 5}s (Clicca per modificare)` : "Clicca per attivare Fade"}
                                         >
                                             <Wind className="w-4 h-4" />
                                             <span className="text-xs font-bold">{t.fade_btn}</span>
                                             {editingTarget?.hasFadeOut && (
-                                                <span className="text-[9px] font-mono opacity-80 border-l border-rose-500/50 pl-2 ml-1">
-                                                    {Math.round(editingTarget.fadeOutDuration || 5)}s
+                                                <span className="bg-black/30 px-1.5 py-0.5 rounded text-[10px] font-mono border border-rose-500/30">
+                                                    {editingTarget.fadeOutDuration || 5}s
                                                 </span>
                                             )}
                                         </button>
@@ -1977,7 +2005,7 @@ const App: React.FC = () => {
                                   t={t}
                                   isPinned={chatPinned}
                                   onTogglePin={(val) => setChatPinned(val)}
-                                  displayMode="floating"
+                                  displayMode="docked"
                                   connectedStatus={callStatus}
                                   onAnswerCall={handleAnswerCall}
                               />

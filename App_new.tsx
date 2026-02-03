@@ -17,15 +17,16 @@ import {
     isElectron,
     extractFileName,
     formatPathForSaving,
-    normalizePath
+    normalizePath,
+    isAndroidPlatform
 } from './utils/platformUtils';
 import { useAudioPlayer } from './hooks/useAudioPlayer';
 import { usePlaylistManager } from './hooks/usePlaylistManager';
 import { useShowLogger } from './hooks/useShowLogger'; 
 import { useRemoteSync } from './hooks/useRemoteSync'; 
-import { writeTextFile, readTextFile, addPlaylistToHistory } from './utils/filesystemUtils'; 
+import { writeTextFile, readTextFile, addPlaylistToHistory, saveDownloadedAssetUniversal } from './utils/filesystemUtils'; 
 import { EstraiName, EstraiPath } from './utils/windowsFileUtils'; 
-import { checkLocalAsset } from './utils/androidFileUtils';
+import { checkLocalAsset, ASSETS_FOLDER } from './utils/androidFileUtils';
 import { AppGlobals } from './globals'; 
 
 // --- IMPORT MODALS ---
@@ -40,7 +41,7 @@ import NetworkModal from './components/modals/NetworkModal';
 import ChatModal from './components/modals/ChatModal'; 
 import RenameModal from './components/modals/RenameModal';
 
-export const APP_VERSION = "Ver 2.6.8";
+export const APP_VERSION = "Ver 2.8.0";
 
 const App: React.FC = () => {
   // LANGUAGE STATE
@@ -58,6 +59,9 @@ const App: React.FC = () => {
   const [clientName, setClientName] = useState("Tablet Remoto"); 
   const [clientPin, setClientPin] = useState(""); 
 
+  // --- GLOBAL FADE SETTINGS ---
+  const [globalFadeDuration, setGlobalFadeDuration] = useState<number>(2.5); // Default manual fade
+
   // Load Settings from LocalStorage
   useEffect(() => {
       try {
@@ -72,6 +76,7 @@ const App: React.FC = () => {
               if (parsed.serverPin !== undefined) setServerPin(parsed.serverPin);
               if (parsed.clientName !== undefined) setClientName(parsed.clientName);
               if (parsed.clientPin !== undefined) setClientPin(parsed.clientPin);
+              if (parsed.globalFadeDuration !== undefined) setGlobalFadeDuration(parsed.globalFadeDuration);
           }
       } catch (e) {}
   }, []);
@@ -80,7 +85,7 @@ const App: React.FC = () => {
   const saveSettings = (updates: any) => {
       const newState = { 
           enableNetwork, enableBeep, callTimeout, language,
-          serverPin, clientName, clientPin,
+          serverPin, clientName, clientPin, globalFadeDuration,
           ...updates 
       };
       localStorage.setItem('regia_settings', JSON.stringify(newState));
@@ -209,7 +214,7 @@ const App: React.FC = () => {
       const vol = Math.round((item.customGain || 1.0) * 100);
       const markIn = item.trimStart ? formatTimeDetail(item.trimStart) : "0";
       const markOut = item.trimEnd ? formatTimeDetail(item.trimEnd) : "End";
-      const fade = item.hasFadeOut ? "SI" : "NO";
+      const fade = item.hasFadeOut ? `SI (${item.fadeOutDuration || 5}s)` : "NO";
       return `(mark-in: ${markIn}; mark-out: ${markOut}; fade: ${fade}; volume: ${vol}%)`;
   };
 
@@ -219,7 +224,7 @@ const App: React.FC = () => {
   // Modals
   const [confirmModal, setConfirmModal] = useState<{isOpen: boolean; title: string; message: string; action: () => void; confirmText?: string; cancelText?: string}>({isOpen: false, title: '', message: '', action: () => {}});
   const [saveSuccessModal, setSaveSuccessModal] = useState({ isOpen: false, location: '', fileName: '' });
-  const [timeEditModal, setTimeEditModal] = useState<{isOpen: boolean; type: 'start'|'end'|'duration'|null; value: number}>({isOpen: false, type: null, value: 0});
+  const [timeEditModal, setTimeEditModal] = useState<{isOpen: boolean; type: 'start'|'end'|'duration'|'fade_auto'|'fade_manual'|null; value: number}>({isOpen: false, type: null, value: 0});
   const [noteModalOpen, setNoteModalOpen] = useState(false); 
   const [infoModalOpen, setInfoModalOpen] = useState(false);
   const [rawEditorOpen, setRawEditorOpen] = useState(false);
@@ -234,6 +239,13 @@ const App: React.FC = () => {
   
   // STATE: Store remote master path for download
   const [remoteMasterPath, setRemoteMasterPath] = useState<string | undefined>(undefined);
+
+  // --- DOWNLOAD STATE (Moved from NetworkModal) ---
+  const [isDownloading, setIsDownloading] = useState(false);
+  const [downloadProgress, setDownloadProgress] = useState(0); 
+  const [downloadStatusText, setDownloadStatusText] = useState("");
+  const [errorDetails, setErrorDetails] = useState<string[]>([]);
+  const [showErrorDialog, setShowErrorDialog] = useState(false);
 
   const waveSeekRequestRef = useRef<number | null>(null);
   const localSaveBtnRef = useRef<HTMLButtonElement>(null);
@@ -355,6 +367,32 @@ const App: React.FC = () => {
       isAndroid
   });
 
+  // --- NEW: REPOSITIONING HANDLER ---
+  const handleRepositionRequest = (index: number) => {
+      if (playerState.isPlaying) {
+          // If playing, we log the attempt but do NOT perform action
+          logEvent("Tentativo Riposizionamento", "Negato: Riproduzione in corso", true);
+          return;
+      }
+
+      setConfirmModal({
+          isOpen: true,
+          title: t.reposition_title,
+          message: t.reposition_msg.replace('{song}', playlistState.songs[index].title),
+          confirmText: t.btn_confirm,
+          cancelText: t.btn_cancel,
+          action: () => {
+              // 1. Move Index
+              playlistActions.setCurrentIndex(index);
+              // 2. Clear Played Status for this and future
+              playlistActions.rewindPlayedStatus(index);
+              // 3. Log
+              logEvent("Riposizionamento Manuale", `Salto alla traccia ${index + 1}: ${playlistState.songs[index].title}`, true);
+              setConfirmModal(prev => ({...prev, isOpen: false}));
+          }
+      });
+  };
+
   const performPlay = useCallback((source: 'local' | 'remote' = 'local') => {
       if (hasTarget && (editingTarget as Song).type !== 'separator') {
           if (appMode === 'presentation' && editingSfxIndex === null) {
@@ -402,10 +440,11 @@ const App: React.FC = () => {
 
   const performManualFade = useCallback((source: 'local' | 'remote' = 'local') => {
       if (appMode === 'presentation' && editingSfxIndex === null) {
-          logEvent(`Traccia ${playlistState.currentIndex + 1}`, "Fade manuale", false, source === 'remote' ? "[client]" : "");
+          logEvent(`Traccia ${playlistState.currentIndex + 1}`, `Fade manuale (${globalFadeDuration}s)`, false, source === 'remote' ? "[client]" : "");
       }
-      audioControls.manualFade();
-  }, [appMode, editingSfxIndex, playlistState.currentIndex, logEvent, audioControls]);
+      // Pass stored global fade duration (in ms) to player
+      audioControls.manualFade(globalFadeDuration * 1000);
+  }, [appMode, editingSfxIndex, playlistState.currentIndex, logEvent, audioControls, globalFadeDuration]);
 
   const performNext = useCallback(() => {
       if (editingSfxIndex !== null) return;
@@ -584,10 +623,16 @@ const App: React.FC = () => {
   }, [playlistActions]);
 
   const handleRemoteState = useCallback((state: any) => {
+      // SLAVE: SYNC FADE CONFIG & STATE
+      if (state.fadeDuration !== undefined) {
+          setGlobalFadeDuration(state.fadeDuration);
+      }
+
       audioControls.updateState({
           currentTime: state.currentTime,
           isPlaying: state.isPlaying,
-          volume: state.volume 
+          volume: state.volume,
+          isFading: state.isFading // SYNC RED BUTTON STATE
       });
       if (state.currentIndex !== undefined && state.currentIndex !== playlistState.currentIndex) {
           playlistActions.setCurrentIndex(state.currentIndex);
@@ -695,18 +740,215 @@ const App: React.FC = () => {
                   appMode: appMode,
                   // SYNC INFO
                   showDuration: currentDuration,
-                  isShowEnded: !!showEndTime
+                  isShowEnded: !!showEndTime,
+                  // SYNC FADE INFO (NEW)
+                  fadeDuration: globalFadeDuration,
+                  isFading: playerState.isFading
               });
           }, 200); 
           return () => clearInterval(interval);
       }
-  }, [remoteSync.role, playerState.isPlaying, playerState.currentTime, playerState.volume, playlistState.currentIndex, appMode, showEndTime]);
+  }, [remoteSync.role, playerState.isPlaying, playerState.currentTime, playerState.volume, playlistState.currentIndex, appMode, showEndTime, globalFadeDuration, playerState.isFading]);
 
   useEffect(() => {
       if (remoteSync.role === 'master' && remoteSync.clientCount > 0 && playlistState.songs.length > 0) {
           remoteSync.sendPlaylist(playlistState.songs, playlistState.sfxItems, playlistState.sourceFilePath || undefined);
       }
   }, [remoteSync.clientCount, remoteSync.role, playlistState.songs, playlistState.sfxItems, playlistState.sourceFilePath]);
+
+  // --- DOWNLOAD MANAGER (MOVED FROM NETWORK MODAL) ---
+  const handleDownloadMedia = async () => {
+        if (!remoteSync.connectedIP) return;
+        setIsDownloading(true);
+        setDownloadProgress(0);
+        setErrorDetails([]); 
+        setShowErrorDialog(false);
+        setNetworkModalOpen(true); // Ensure modal is open to show progress
+        
+        const allItems = [...playlistState.songs, ...playlistState.sfxItems.filter(s => s && s.url)];
+        const total = allItems.length + (remoteMasterPath ? 1 : 0);
+        
+        if (total === 0) {
+            setDownloadStatusText("Nessun file da scaricare.");
+            setIsDownloading(false);
+            return;
+        }
+
+        let completed = 0;
+        const errors: string[] = [];
+
+        // --- WINDOWS SPECIFIC LOGIC ---
+        if (!isAndroidPlatform()) {
+            const electron = (window as any).electronAPI;
+            if (electron) {
+                try {
+                    const downloadDir = await electron.getPath('downloads');
+                    const targetDir = `${downloadDir.replace(/\\/g, '/')}/RegiaMusiche_Client`;
+                    await electron.createDir(targetDir);
+                    
+                    const remappedSongs = playlistState.songs.map(s => ({...s})); 
+                    const remappedSfx = playlistState.sfxItems.map(s => s ? {...s} : undefined); 
+
+                    for (const item of allItems) {
+                        if (!item || !item.originalFileName) continue;
+                        const fileName = item.originalFileName;
+                        const localFullPath = `${targetDir}/${fileName}`;
+                        setDownloadStatusText(`${t.download_progress} ${fileName}`);
+                        let masterUrl = ""; 
+
+                        try {
+                            masterUrl = `http://${remoteSync.connectedIP}:8081/stream?path=${encodeURIComponent(item.path || "")}`;
+                            const response = await fetch(masterUrl);
+                            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                            const blob = await response.blob();
+                            
+                            const base64 = await new Promise<string>((resolve, reject) => {
+                                const reader = new FileReader();
+                                reader.onloadend = () => resolve((reader.result as string).split(',')[1]);
+                                reader.onerror = reject;
+                                reader.readAsDataURL(blob);
+                            });
+
+                            await electron.writeBinary(localFullPath, base64);
+
+                            // REMAP IN MEMORY
+                            remappedSongs.forEach(s => {
+                                if (s.id === item.id) {
+                                    s.path = localFullPath; 
+                                    s.url = `file:///${localFullPath}`; 
+                                }
+                            });
+                            remappedSfx.forEach(s => {
+                                if (s && s.id === item.id) {
+                                    s.path = localFullPath;
+                                    s.url = `file:///${localFullPath}`;
+                                }
+                            });
+
+                        } catch (e: any) {
+                            console.error(`Error downloading ${fileName}`, e);
+                            errors.push(`FILE: ${fileName}\nURL: ${masterUrl}\nORIG_PATH: ${item.path}\nDEST: ${localFullPath}\nERR: ${e.message}`);
+                        }
+                        
+                        completed++;
+                        setDownloadProgress(Math.round((completed / total) * 100));
+                    }
+
+                    if (remoteMasterPath) {
+                        try {
+                            const playlistName = extractFileName(remoteMasterPath);
+                            const masterUrl = `http://${remoteSync.connectedIP}:8081/stream?path=${encodeURIComponent(remoteMasterPath)}`;
+                            const response = await fetch(masterUrl);
+                            if (response.ok) {
+                                const text = await response.text();
+                                await electron.writeFile(`${targetDir}/${playlistName}`, text);
+                            }
+                        } catch (e) {}
+                        completed++;
+                        setDownloadProgress(Math.round((completed / total) * 100));
+                    }
+
+                    setIsDownloading(false);
+                    if (errors.length > 0) {
+                        setDownloadStatusText(`${t.download_error}: ${errors.length} files failed.`);
+                        setErrorDetails([`TARGET FOLDER: ${targetDir}`, ...errors]);
+                        setShowErrorDialog(true);
+                    } else {
+                        setDownloadStatusText(t.download_complete);
+                        handleReloadAssets(remappedSongs, remappedSfx as SfxItem[]);
+                    }
+                    return;
+
+                } catch (mainErr: any) {
+                    setIsDownloading(false);
+                    setErrorDetails([`INIT ERROR: ${mainErr.message}`]);
+                    setShowErrorDialog(true);
+                    return;
+                }
+            }
+        }
+
+        // --- ANDROID LOGIC ---
+        if (remoteMasterPath) {
+            const playlistName = extractFileName(remoteMasterPath);
+            setDownloadStatusText(`Scaricamento Playlist: ${playlistName}`);
+            try {
+                const masterUrl = `http://${remoteSync.connectedIP}:8081/stream?path=${encodeURIComponent(remoteMasterPath)}`;
+                const response = await fetch(masterUrl);
+                if (!response.ok) throw new Error("Server response " + response.status);
+                const textContent = await response.text();
+                if(isAndroidPlatform()) {
+                     await writeTextFile(`${ASSETS_FOLDER}/${playlistName}`, playlistName, textContent, Directory.External);
+                } 
+            } catch (e: any) {
+                console.error(`Error downloading playlist ${playlistName}`, e);
+                errors.push(`PLAYLIST: ${playlistName}\nPATH: ${remoteMasterPath}\nERR: ${e.message}`);
+            }
+            completed++;
+            setDownloadProgress(Math.round((completed / total) * 100));
+        }
+
+        for (const item of allItems) {
+            if (!item || !item.originalFileName) continue;
+            const fileName = item.originalFileName;
+            setDownloadStatusText(`${t.download_progress} ${fileName}`);
+
+            try {
+                let exists = false;
+                if(isAndroidPlatform()) {
+                    exists = (await checkLocalAsset(fileName)) !== null;
+                }
+                
+                if (!exists) {
+                    const masterUrl = `http://${remoteSync.connectedIP}:8081/stream?path=${encodeURIComponent(item.path || "")}`;
+                    const response = await fetch(masterUrl);
+                    if (!response.ok) throw new Error("Server response " + response.status);
+                    const blob = await response.blob();
+                    const base64 = await new Promise<string>((resolve, reject) => {
+                        const reader = new FileReader();
+                        reader.onloadend = () => {
+                            const res = reader.result as string;
+                            const base64Raw = res.split(',')[1];
+                            resolve(base64Raw);
+                        };
+                        reader.onerror = reject;
+                        reader.readAsDataURL(blob);
+                    });
+                    await saveDownloadedAssetUniversal(fileName, base64);
+                }
+            } catch (e: any) {
+                console.error(`Error downloading ${fileName}`, e);
+                errors.push(`FILE: ${fileName}\nREMOTE PATH: ${item.path}\nERR: ${e.message}`);
+            }
+            completed++;
+            setDownloadProgress(Math.round((completed / total) * 100));
+        }
+
+        setIsDownloading(false);
+        if (errors.length > 0) {
+             setDownloadStatusText(`${t.download_error}: ${errors.length} files failed.`);
+             setErrorDetails(errors);
+             setShowErrorDialog(true);
+        } else {
+             setDownloadStatusText(t.download_complete);
+             handleReloadAssets();
+        }
+  };
+
+  // --- AUTO DOWNLOAD WATCHER ---
+  const prevReadOnly = useRef(remoteSync.isReadOnly);
+  useEffect(() => {
+      // If we transition from ReadOnly(Locked) -> Full Control(Unlocked) AND we are a Slave
+      if (prevReadOnly.current === true && remoteSync.isReadOnly === false && remoteSync.role === 'slave') {
+          // AND we have media to download
+          if (playlistState.songs.length > 0) {
+              console.log("Auto-starting download due to permission grant...");
+              handleDownloadMedia();
+          }
+      }
+      prevReadOnly.current = remoteSync.isReadOnly;
+  }, [remoteSync.isReadOnly, remoteSync.role, playlistState.songs]);
+
 
   const handleStartCall = () => {
       if (callStatus === 'idle') {
@@ -930,6 +1172,23 @@ const App: React.FC = () => {
   const updateTargetItem = (updater: (item: Song | SfxItem) => Song | SfxItem) => {
       if (editingSfxIndex !== null) playlistActions.updateSfx(editingSfxIndex, updater(playlistState.sfxItems[editingSfxIndex]) as SfxItem);
       else playlistActions.updateSong(playlistState.currentIndex, (s) => updater(s) as Song);
+  };
+
+  // --- NEW FADE TOGGLE HANDLER ---
+  const handleToggleFade = () => {
+      if (!editingTarget) return;
+      
+      // If currently ON, turn OFF
+      if (editingTarget.hasFadeOut) {
+          updateTargetItem(i => ({...i, hasFadeOut: false}));
+      } else {
+          // If currently OFF, open Modal to ask duration (Default 5s)
+          setTimeEditModal({ 
+              isOpen: true, 
+              type: 'fade_auto', 
+              value: 5 // Default proposed value
+          });
+      }
   };
 
   const handlePlaylistLoaded = (newSongs: Song[], newSfx: SfxItem[], fileName?: string, path?: string, directory?: Directory, fromDisk: boolean = true) => {
@@ -1300,6 +1559,15 @@ const App: React.FC = () => {
      else if (type === 'duration') {
          const start = editingTarget?.trimStart || 0;
          updateTargetItem(i => ({ ...i, trimEnd: start + val }));
+     } else if (type === 'fade_auto') {
+         // ACTIVATE AUTO FADE WITH SPECIFIC DURATION - Force integer
+         const intVal = Math.round(val);
+         updateTargetItem(i => ({ ...i, hasFadeOut: true, fadeOutDuration: intVal }));
+     } else if (type === 'fade_manual') {
+         // UPDATE GLOBAL MANUAL FADE SETTING - Force integer
+         const intVal = Math.round(val);
+         setGlobalFadeDuration(intVal);
+         saveSettings({ globalFadeDuration: intVal });
      }
   };
 
@@ -1309,7 +1577,8 @@ const App: React.FC = () => {
          trimStart: 0,
          trimEnd: 0,
          customGain: 1.0,
-         hasFadeOut: false
+         hasFadeOut: false,
+         fadeOutDuration: 5.0 // Reset to default
      }));
   };
 
@@ -1341,6 +1610,15 @@ const App: React.FC = () => {
         if (parts[0] === 'SFX') {
             const idx = parseInt(parts[1]);
             if (!isNaN(idx) && idx >= 0 && idx < 6) {
+                // FADE PARSING LOGIC
+                let hasFade = false;
+                let fadeDur = 5;
+                if (parts[6] === '1') { hasFade = true; }
+                else {
+                    const f = parseFloat(parts[6]);
+                    if (f > 0) { hasFade = true; fadeDur = f; }
+                }
+
                 sfx[idx] = {
                     id: `sfx-${Date.now()}-${idx}`,
                     label: parts[2],
@@ -1349,7 +1627,8 @@ const App: React.FC = () => {
                     originalFileName: extractFileName(parts[3]),
                     trimStart: parseFloat(parts[4]) || 0,
                     trimEnd: parseFloat(parts[5]) || 0,
-                    hasFadeOut: parts[6] === '1',
+                    hasFadeOut: hasFade,
+                    fadeOutDuration: fadeDur,
                     customGain: parseFloat(parts[7]) || 1.0
                 };
             }
@@ -1365,6 +1644,15 @@ const App: React.FC = () => {
              });
         } else {
             if (parts.length >= 2) {
+                 // FADE PARSING LOGIC
+                 let hasFade = false;
+                 let fadeDur = 5;
+                 if (parts[4] === '1') { hasFade = true; }
+                 else {
+                     const f = parseFloat(parts[4]);
+                     if (f > 0) { hasFade = true; fadeDur = f; }
+                 }
+
                  songs.push({
                     id: `song-${Date.now()}-${index}`,
                     title: parts[0],
@@ -1374,7 +1662,8 @@ const App: React.FC = () => {
                     type: 'audio',
                     trimStart: parseFloat(parts[2]) || 0,
                     trimEnd: parseFloat(parts[3]) || 0,
-                    hasFadeOut: parts[4] === '1',
+                    hasFadeOut: hasFade,
+                    fadeOutDuration: fadeDur,
                     customGain: parseFloat(parts[5]) || 1.0,
                     note: parts[6] || ''
                  });
@@ -1481,6 +1770,14 @@ const App: React.FC = () => {
                 onChangeClientPin={(val) => { setClientPin(val); saveSettings({ clientPin: val }); }}
                 serverPin={serverPin}
                 clientName={clientName}
+                // PASS DOWNLOAD STATE & HANDLERS
+                isDownloading={isDownloading}
+                downloadProgress={downloadProgress}
+                downloadStatusText={downloadStatusText}
+                errorDetails={errorDetails}
+                showErrorDialog={showErrorDialog}
+                onDownloadRequest={handleDownloadMedia}
+                onCloseErrorDialog={() => setShowErrorDialog(false)}
             />
             <SettingsModal 
                 isOpen={settingsModalOpen} 
@@ -1577,6 +1874,8 @@ const App: React.FC = () => {
                         if (!newVal && !chatPinned) setLeftPanelWidth(40);
                     }}
                     isNotesPinned={notesPinned}
+                    // PASS REPOSITION HANDLER
+                    onRepositionRequest={handleRepositionRequest}
                 />
               </div>
 
@@ -1742,12 +2041,19 @@ const App: React.FC = () => {
                                             <span className="font-mono text-xs w-10 text-center text-indigo-400 font-bold">{Math.round((editingTarget?.customGain || 1)*100)}%</span>
                                         </div>
 
+                                        {/* MODIFIED FADE BUTTON */}
                                         <button 
-                                            onClick={() => updateTargetItem(i => ({...i, hasFadeOut: !i.hasFadeOut}))}
+                                            onClick={handleToggleFade}
                                             className={`h-10 px-4 rounded-lg border flex items-center gap-2 transition-all ${editingTarget?.hasFadeOut ? 'bg-rose-900/40 border-rose-500 text-rose-400' : 'bg-slate-900 border-slate-700 text-slate-500 opacity-60'}`}
+                                            title={editingTarget?.hasFadeOut ? `Fade attivo: ${editingTarget.fadeOutDuration || 5}s (Clicca per modificare)` : "Clicca per attivare Fade"}
                                         >
                                             <Wind className="w-4 h-4" />
                                             <span className="text-xs font-bold">{t.fade_btn}</span>
+                                            {editingTarget?.hasFadeOut && (
+                                                <span className="bg-black/30 px-1.5 py-0.5 rounded text-[10px] font-mono border border-rose-500/30">
+                                                    {editingTarget.fadeOutDuration || 5}s
+                                                </span>
+                                            )}
                                         </button>
 
                                         {editingSfxIndex === null && (
@@ -1914,13 +2220,10 @@ const App: React.FC = () => {
                                   messages={chatMessages}
                                   onSendMessage={handleSendChatMessage}
                                   onEndCall={handleEndCall}
-                                  onCloseWindow={handleCloseChatWindow} // NEW PROP HANDLED
+                                  onCloseWindow={handleCloseChatWindow} // NEW PROP PASSED
                                   t={t}
                                   isPinned={chatPinned}
-                                  onTogglePin={(val) => { 
-                                      setChatPinned(val); 
-                                      if(!val && !notesPinned) setLeftPanelWidth(40); 
-                                  }} 
+                                  onTogglePin={(val) => setChatPinned(val)}
                                   displayMode="docked"
                                   connectedStatus={callStatus}
                                   onAnswerCall={handleAnswerCall}
@@ -1941,6 +2244,8 @@ const App: React.FC = () => {
                 onSeek={handleSeek}
                 onVolumeChange={(v) => requestVolumeChange(v)} 
                 onFade={() => requestManualFade()} 
+                onFadeConfig={() => setTimeEditModal({isOpen: true, type: 'fade_manual', value: globalFadeDuration})}
+                manualFadeDuration={Math.round(globalFadeDuration)} // PASS PROP
                 title={editingTarget ? (editingSfxIndex !== null ? (editingTarget as SfxItem).label : (editingTarget as Song).title) : t.no_track_title}
                 startTime={editingTarget?.trimStart || 0}
                 endTime={editingTarget?.trimEnd || 0}
@@ -1954,7 +2259,17 @@ const App: React.FC = () => {
 
       <ConfirmModal isOpen={confirmModal.isOpen} title={confirmModal.title} message={confirmModal.message} confirmText={confirmModal.confirmText} cancelText={confirmModal.cancelText} onConfirm={confirmModal.action} onCancel={() => setConfirmModal(prev => ({...prev, isOpen: false}))} />
       <SaveSuccessModal isOpen={saveSuccessModal.isOpen} fileName={saveSuccessModal.fileName} location={saveSuccessModal.location} title={t.saved_title} msgFileUpdated={t.file_updated} onClose={() => setSaveSuccessModal(prev => ({ ...prev, isOpen: false }))} />
-      <TimeEditModal isOpen={timeEditModal.isOpen} type={timeEditModal.type} initialValue={timeEditModal.value} onSave={handleModalSave} onClose={() => setTimeEditModal(prev => ({...prev, isOpen: false}))} t={t} />
+      
+      {/* UPDATE: Use TimeEditModal for Fade Config */}
+      <TimeEditModal 
+          isOpen={timeEditModal.isOpen} 
+          type={timeEditModal.type as any} // Cast to satisfy type definition
+          initialValue={timeEditModal.value} 
+          onSave={handleModalSave} 
+          onClose={() => setTimeEditModal(prev => ({...prev, isOpen: false}))} 
+          t={t} 
+      />
+      
       <NoteModal isOpen={noteModalOpen} initialValue={(editingTarget as Song)?.note || ''} onSave={(val) => { if (remoteSync.role === 'slave' && editingSfxIndex === null) { remoteSync.sendMasterCommand({ type: 'UPDATE_SONG', index: playlistState.currentIndex, isSfx: false, data: { ...editingTarget, note: val } }); } else { updateTargetItem(i => ({...i, note: val})); }}} onClose={() => setNoteModalOpen(false)} t={t} />
       <RawEditorModal isOpen={rawEditorOpen} initialContent={playlistActions.generatePlaylistContent()} onSave={handleRawSaveRequest} onClose={() => setRawEditorOpen(false)} t={t} />
       <RawEditorModal isOpen={logViewerOpen} initialContent={logContent} onSave={() => {}} onClose={() => setLogViewerOpen(false)} t={t} readOnly={true} title="File log della playlist" /> 
@@ -1971,6 +2286,14 @@ const App: React.FC = () => {
           sfx={playlistState.sfxItems} 
           masterFilePath={remoteSyncPath} 
           onAssetsUpdated={handleReloadAssets} // UPDATED HANDLER
+          // PASS DOWNLOAD STATE & HANDLERS
+          isDownloading={isDownloading}
+          downloadProgress={downloadProgress}
+          downloadStatusText={downloadStatusText}
+          errorDetails={errorDetails}
+          showErrorDialog={showErrorDialog}
+          onDownloadRequest={handleDownloadMedia}
+          onCloseErrorDialog={() => setShowErrorDialog(false)}
       /> 
       <RenameModal 
           isOpen={renameModal.isOpen}

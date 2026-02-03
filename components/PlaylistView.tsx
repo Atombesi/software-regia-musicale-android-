@@ -12,7 +12,7 @@ interface PlaylistViewProps {
   onLoadNew: () => void;
   onLoadSingle: (file: File) => void;
   onAddTrack: () => void; 
-  onAddSeparator?: (label: string) => void; // NEW: Callback for adding separator
+  onAddSeparator?: (label: string) => void; 
   onReorder: (fromIndex: number, toIndex: number) => void; 
   onDeleteSong: (index: number) => void; 
   appMode: AppMode;
@@ -36,12 +36,12 @@ interface PlaylistViewProps {
   readOnly?: boolean;
   onRenameSong?: (index: number) => void;
   hasUnsavedChanges?: boolean;
-  // NEW PROPS FOR TIMER
   showStartTime?: number | null;
   showEndTime?: number | null;
-  // NEW PROPS FOR NOTE PINNING
   onTogglePinNotes?: () => void;
   isNotesPinned?: boolean;
+  // NEW: Reposition callback
+  onRepositionRequest?: (index: number) => void;
 }
 
 // --- HELPER: Format Duration (MM:SS) ---
@@ -204,7 +204,8 @@ const PlaylistView: React.FC<PlaylistViewProps> = ({
   showStartTime,
   showEndTime,
   onTogglePinNotes,
-  isNotesPinned = false
+  isNotesPinned = false,
+  onRepositionRequest
 }) => {
   const activeRef = useRef<HTMLButtonElement>(null);
   const t = translations[language];
@@ -525,7 +526,8 @@ const PlaylistView: React.FC<PlaylistViewProps> = ({
               key={song.id}
               ref={isActive ? activeRef : null}
               onClick={() => handleRowClick(index, isActive, isMissing)}
-              disabled={isPlayedLive || readOnly} 
+              // MODIFIED: Removed isPlayedLive from disabled so double click works
+              disabled={readOnly} 
               className={`w-full group flex items-center gap-4 p-4 rounded-xl transition-all duration-200 text-left border ${getRowStyles(index, isActive, isPlayedLive, isMissing)}`}
             >
               <div 
@@ -535,9 +537,17 @@ const PlaylistView: React.FC<PlaylistViewProps> = ({
                         onRelink(index);
                     }
                 }}
-                title={appMode === 'editing' ? t.relink_tooltip_badge : ""}
+                onDoubleClick={(e) => {
+                    if (appMode === 'presentation' && !readOnly && onRepositionRequest) {
+                        e.stopPropagation();
+                        // This will be handled in App.tsx
+                        onRepositionRequest(index);
+                    }
+                }}
+                title={appMode === 'editing' ? t.relink_tooltip_badge : (appMode === 'presentation' && !readOnly ? "Doppio click per riposizionare" : "")}
                 className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 transition-all z-10 
                 ${appMode === 'editing' && !readOnly ? 'cursor-pointer hover:scale-110 hover:ring-2 hover:ring-emerald-400' : ''}
+                ${appMode === 'presentation' && !readOnly && !isPlaying ? 'cursor-pointer hover:scale-110 hover:ring-2 hover:ring-amber-400' : ''}
                 ${isMissing 
                     ? 'bg-red-900 text-red-500 group-hover:bg-red-800' 
                     : isActive 
@@ -599,11 +609,17 @@ const PlaylistView: React.FC<PlaylistViewProps> = ({
                                 <Scissors className="w-3 h-3" />
                             </div>
                         )}
+                        
+                        {/* FADE ICON MODIFIED TO SHOW DURATION IN TOOLTIP */}
                         {!isMissing && song.hasFadeOut && (
-                            <div className={`flex items-center justify-center w-5 h-5 rounded bg-slate-900/50 border border-slate-700 ${isActive ? 'text-rose-400' : 'text-slate-500'}`} title="Fade Out attivo">
+                            <div 
+                                className={`flex items-center justify-center w-5 h-5 rounded bg-slate-900/50 border border-slate-700 ${isActive ? 'text-rose-400' : 'text-slate-500'}`} 
+                                title={`Fade OUT attivo (${song.fadeOutDuration || 5} sec)`}
+                            >
                                 <Wind className="w-3 h-3" />
                             </div>
                         )}
+                        
                         {!isMissing && hasNote && (
                             <div className={`flex items-center justify-center w-5 h-5 rounded bg-slate-900/50 border border-slate-700 ${isActive ? 'text-amber-400' : 'text-slate-500'}`} title="Nota presente">
                                 <StickyNote className="w-3 h-3" />

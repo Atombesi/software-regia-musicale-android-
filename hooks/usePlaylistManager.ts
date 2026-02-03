@@ -231,6 +231,17 @@ export const usePlaylistManager = () => {
         setPlayedSongIds(prev => new Set(prev).add(id));
     }, []);
 
+    // NEW: Clears played status for all songs starting from `startIndex` onwards
+    const rewindPlayedStatus = useCallback((startIndex: number) => {
+        setPlayedSongIds(prev => {
+            const next = new Set(prev);
+            for(let i = startIndex; i < songs.length; i++) {
+                if (songs[i].id) next.delete(songs[i].id);
+            }
+            return next;
+        });
+    }, [songs]);
+
     // --- FILE GENERATION ---
     const generatePlaylistContent = useCallback(() => {
         return generateContentString(songs, sfxItems);
@@ -266,6 +277,7 @@ export const usePlaylistManager = () => {
             prevSong,
             resetShow,
             markAsPlayed,
+            rewindPlayedStatus, // NEW EXPORT
             generatePlaylistContent,
             clearPlaylist,
             setSourceFileName, 

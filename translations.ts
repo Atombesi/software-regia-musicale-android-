@@ -1,5 +1,4 @@
 
-
 export type Language = 'it' | 'en';
 
 export const translations = {
@@ -94,6 +93,10 @@ export const translations = {
     load_new_msg: "Le modifiche andranno perse. Continuare?",
     
     reset_show_msg: "Sei sicuro di voler resettare lo spettacolo e tornare all'inizio?",
+
+    // REPOSITION MODAL
+    reposition_title: "ATTENZIONE: Riposizionamento",
+    reposition_msg: "Stai forzando il salto al brano:\n\n\"{song}\"\n\nQuesta operazione reimposterà lo stato 'Eseguito' di tutte le tracce successive.\n\nSEI SICURO DI VOLER PROCEDERE?",
     
     // NEW HISTORY TRANSLATIONS
     history_remove_title: "ERRORE CARICAMENTO",
@@ -268,6 +271,10 @@ export const translations = {
     load_new_msg: "Changes will be lost. Continue?",
     
     reset_show_msg: "Are you sure you want to reset the show and go back to the start?",
+
+    // REPOSITION MODAL
+    reposition_title: "WARNING: Reposition",
+    reposition_msg: "You are about to jump to track:\n\n\"{song}\"\n\nThis will reset the 'Played' status of all subsequent tracks.\n\nARE YOU SURE?",
     
     // NEW HISTORY TRANSLATIONS
     history_remove_title: "LOAD ERROR",
