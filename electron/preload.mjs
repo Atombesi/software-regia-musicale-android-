@@ -14,6 +14,7 @@ try {
     copyFile: (src, dest) => ipcRenderer.invoke('file:copy', src, dest),
     createDir: (path) => ipcRenderer.invoke('dir:create', path),
     exists: (path) => ipcRenderer.invoke('file:exists', path),
+    maximize: () => ipcRenderer.invoke('window:maximize'),
     
     // SERVER (V2.0)
     server: {

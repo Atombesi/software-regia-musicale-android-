@@ -7,7 +7,7 @@ interface NotesPanelProps {
     isSfx: boolean;
     onUpdateNote: (note: string) => void;
     readOnly: boolean;
-    onClose: () => void;
+    onClose?: () => void;
 }
 
 const NotesPanel: React.FC<NotesPanelProps> = ({ targetItem, isSfx, onUpdateNote, readOnly, onClose }) => {
@@ -57,13 +57,15 @@ const NotesPanel: React.FC<NotesPanelProps> = ({ targetItem, isSfx, onUpdateNote
                     <StickyNote className="w-5 h-5" />
                     <span className="font-bold text-xs uppercase tracking-wider">Note: {(targetItem as Song).title}</span>
                 </div>
-                <button 
-                    onClick={onClose}
-                    className="p-1 text-slate-500 hover:text-white hover:bg-slate-700 rounded transition-colors"
-                    title="Chiudi pannello note"
-                >
-                    <span className="font-bold text-xs">CHIUDI</span>
-                </button>
+                {onClose && (
+                    <button 
+                        onClick={onClose}
+                        className="p-1 text-slate-500 hover:text-white hover:bg-slate-700 rounded transition-colors"
+                        title="Chiudi pannello note"
+                    >
+                        <span className="font-bold text-xs">CHIUDI</span>
+                    </button>
+                )}
             </div>
 
             {/* Editor */}

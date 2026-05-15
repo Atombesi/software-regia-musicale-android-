@@ -40,6 +40,8 @@ interface PlaylistViewProps {
   showEndTime?: number | null;
   onTogglePinNotes?: () => void;
   isNotesPinned?: boolean;
+  hasScript?: boolean;
+  onRequestOpenScript?: () => void;
   // NEW: Reposition callback
   onRepositionRequest?: (index: number) => void;
 }
@@ -205,6 +207,8 @@ const PlaylistView: React.FC<PlaylistViewProps> = ({
   showEndTime,
   onTogglePinNotes,
   isNotesPinned = false,
+  hasScript = false,
+  onRequestOpenScript,
   onRepositionRequest
 }) => {
   const activeRef = useRef<HTMLButtonElement>(null);
@@ -214,6 +218,8 @@ const PlaylistView: React.FC<PlaylistViewProps> = ({
   const [showAddActMenu, setShowAddActMenu] = useState(false);
   const [customActNote, setCustomActNote] = useState("");
   const [showNoteInput, setShowNoteInput] = useState(false);
+  
+  const [showOptionsMenu, setShowOptionsMenu] = useState(false);
 
   // --- COUNTING LOGIC (Exclude Separators) ---
   const totalAudioTracks = useMemo(() => {
@@ -317,13 +323,58 @@ const PlaylistView: React.FC<PlaylistViewProps> = ({
                          </button>
                          
                          {appMode === 'editing' && (
-                            <button
-                                onClick={onOpenRawEditor}
-                                className="p-1.5 rounded-full transition-colors border bg-slate-800 border-slate-600 text-slate-400 hover:text-white hover:border-indigo-500 hover:bg-slate-700"
-                                title="Editor Testuale Playlist (Raw)"
-                            >
-                                <FileSignature className="w-4 h-4" />
-                            </button>
+                             <div className="relative">
+                                 <button
+                                     onClick={() => setShowOptionsMenu(!showOptionsMenu)}
+                                     className="p-1.5 rounded-full transition-colors border bg-slate-800 border-slate-600 text-slate-400 hover:text-white"
+                                     title="Opzioni"
+                                 >
+                                     <div className="flex flex-col gap-[3px] p-[3px]">
+                                         <div className="w-1 h-1 rounded-full bg-current"></div>
+                                         <div className="w-1 h-1 rounded-full bg-current"></div>
+                                         <div className="w-1 h-1 rounded-full bg-current"></div>
+                                     </div>
+                                 </button>
+                                 {showOptionsMenu && (
+                                     <>
+                                         <div className="fixed inset-0 z-30" onClick={() => setShowOptionsMenu(false)}></div>
+                                         <div className="absolute top-full left-0 mt-2 w-48 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl z-40 overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-100">
+                                            <button 
+                                                onClick={() => { onLoadNew(); setShowOptionsMenu(false); }}
+                                                className="px-4 py-3 flex items-center justify-between text-left hover:bg-slate-800 text-slate-300 hover:text-white border-b border-slate-800 text-xs font-bold uppercase transition-colors"
+                                            >
+                                                <span>Carica Playlist</span>
+                                                <Upload className="w-4 h-4 text-emerald-400" />
+                                            </button>
+                                            {onRequestOpenScript && (
+                                                <button 
+                                                    onClick={() => { onRequestOpenScript(); setShowOptionsMenu(false); }}
+                                                    className="px-4 py-3 flex items-center justify-between text-left hover:bg-slate-800 text-slate-300 hover:text-white border-b border-slate-800 text-xs font-bold uppercase transition-colors"
+                                                >
+                                                    <span>Copione</span>
+                                                    <FileText className="w-4 h-4 text-sky-400" />
+                                                </button>
+                                            )}
+                                            {onOpenLog && (
+                                                <button 
+                                                    onClick={() => { onOpenLog(); setShowOptionsMenu(false); }}
+                                                    className="px-4 py-3 flex items-center justify-between text-left hover:bg-slate-800 text-slate-300 hover:text-white border-b border-slate-800 text-xs font-bold uppercase transition-colors"
+                                                >
+                                                    <span>Log Spettacolo</span>
+                                                    <FileText className="w-4 h-4 text-indigo-400" />
+                                                </button>
+                                            )}
+                                            <button 
+                                                onClick={() => { onOpenRawEditor(); setShowOptionsMenu(false); }}
+                                                className="px-4 py-3 flex items-center justify-between text-left hover:bg-slate-800 text-slate-300 hover:text-white text-xs font-bold uppercase transition-colors"
+                                            >
+                                                <span>Editor Testuale</span>
+                                                <FileSignature className="w-4 h-4 text-amber-400" />
+                                            </button>
+                                         </div>
+                                     </>
+                                 )}
+                             </div>
                          )}
 
                          {appMode === 'editing' && (
@@ -336,7 +387,7 @@ const PlaylistView: React.FC<PlaylistViewProps> = ({
                             </button>
                          )}
 
-                         {appMode === 'presentation' && onToggleCompactView && (
+                         {appMode === 'presentation' && isAndroid && onToggleCompactView && (
                             <button
                                 onClick={onToggleCompactView}
                                 className={`p-1.5 rounded-full transition-colors border ${isCompactView ? 'bg-indigo-500 text-white border-indigo-400' : 'bg-slate-800 border-slate-600 text-slate-500 hover:text-white hover:border-slate-400'}`}
@@ -347,7 +398,7 @@ const PlaylistView: React.FC<PlaylistViewProps> = ({
                          )}
                          
                          {/* PIN NOTE BUTTON FOR DESKTOP */}
-                         {!isAndroid && onTogglePinNotes && (
+                         {!isAndroid && onTogglePinNotes && !hasScript && (
                              <button
                                 onClick={onTogglePinNotes}
                                 className={`p-1.5 rounded-full transition-colors border ${isNotesPinned ? 'bg-amber-500 text-white border-amber-400' : 'bg-slate-800 border-slate-600 text-slate-500 hover:text-white hover:border-slate-400'}`}
@@ -380,16 +431,6 @@ const PlaylistView: React.FC<PlaylistViewProps> = ({
 
                  {!readOnly && appMode === 'editing' && songs.length > 0 && (
                     <>
-                         {onOpenLog && (
-                             <button
-                                 onClick={onOpenLog}
-                                 className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-bold uppercase text-indigo-300 hover:text-white bg-slate-800 hover:bg-indigo-600 rounded-lg transition-colors border border-slate-700 hover:border-indigo-500 shadow-md"
-                                 title="Visualizza Log Spettacolo"
-                             >
-                                 <FileText className="w-4 h-4" />
-                             </button>
-                         )}
-
                         <button 
                             onClick={onSavePlaylist}
                             className={`flex items-center gap-1 px-3 py-1.5 text-xs font-bold uppercase transition-colors rounded-lg border shadow-sm
@@ -435,18 +476,7 @@ const PlaylistView: React.FC<PlaylistViewProps> = ({
             </div>
 
             <div className="flex gap-2 items-center">
-                {!readOnly && appMode === 'editing' && (
-                    <button
-                        onClick={onLoadNew}
-                        className="flex items-center gap-2 px-3 py-1.5 bg-slate-800 hover:bg-indigo-600 text-xs font-bold uppercase tracking-wider rounded-lg transition-colors text-slate-300 hover:text-white border border-slate-700 hover:border-indigo-500 shadow-sm"
-                        title={t.load_new}
-                    >
-                        <Upload className="w-4 h-4" />
-                        {t.load_btn}
-                    </button>
-                )}
-
-                {onLanguageRequest && (
+                     {onLanguageRequest && (
                     <div className="ml-1">
                             <FlagIcon lang={language} onClick={onLanguageRequest} />
                     </div>

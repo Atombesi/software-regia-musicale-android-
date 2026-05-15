@@ -40,13 +40,16 @@ import TimeEditModal from './components/modals/TimeEditModal';
 import NetworkModal from './components/modals/NetworkModal';
 import ChatModal from './components/modals/ChatModal'; 
 import RenameModal from './components/modals/RenameModal';
-
-export const APP_VERSION = "Ver 2.7.4";
+import ScriptPanel from './components/ScriptPanel'; 
+import { FileText } from 'lucide-react';
+import { APP_VERSION } from './version';
 
 const App: React.FC = () => {
   // LANGUAGE STATE
   const [language, setLanguage] = useState<Language>('it');
   const [settingsModalOpen, setSettingsModalOpen] = useState(false); 
+  const [scriptPanelOpen, setScriptPanelOpen] = useState(false); // NEW STATE FOR SCRIPT PANEL
+  const [loadedScriptHtml, setLoadedScriptHtml] = useState<string>(''); // NEW STATE FOR LOADED SCRIPT
   const t = translations[language];
 
   // --- SETTINGS STATE ---
@@ -391,6 +394,78 @@ const App: React.FC = () => {
               setConfirmModal(prev => ({...prev, isOpen: false}));
           }
       });
+  };
+
+  const handleSaveScript = async (html: string, pos: {x: number, y: number}, size: {width: number, height: number}, isAutoSave: boolean = false) => {
+      const isRealWeb = Capacitor.getPlatform() === 'web' && !isElectron();
+      const baseName = removeExtension(AppGlobals.Playlistfilename || "unnamed");
+      const fileName = `${baseName}_copione.html`;
+      
+      let fullPathForPlaylist = "";
+
+      if (isRealWeb) {
+           const blob = new Blob([html], { type: 'text/html' });
+           const url = URL.createObjectURL(blob);
+           const a = document.createElement('a');
+           a.href = url;
+           a.download = fileName;
+           document.body.appendChild(a);
+           a.click();
+           document.body.removeChild(a);
+           URL.revokeObjectURL(url);
+           if (!isAutoSave) setSaveSuccessModal({ isOpen: true, location: 'Download Browser', fileName });
+           // Web doesn't have a reliable full absolute path, we'll try to use previous path if applicable.
+           fullPathForPlaylist = fileName;
+      } else {
+           if (isAndroid) {
+               try {
+                   const dir = playlistState.sourceDirectory || Directory.ExternalStorage;
+                   const p = playlistState.sourceFilePath ? playlistState.sourceFilePath.substring(0, playlistState.sourceFilePath.lastIndexOf('/')) : '';
+                   const fullPath = p ? `${p}/${fileName}` : fileName;
+                   await Filesystem.writeFile({
+                       path: fullPath,
+                       data: html,
+                       directory: dir,
+                       encoding: Encoding.UTF8
+                   });
+                   if (!isAutoSave) setSaveSuccessModal({ isOpen: true, location: `Android: ${fullPath}`, fileName });
+                   fullPathForPlaylist = fullPath;
+               } catch(e:any) {
+                   if (!isAutoSave) alert("Errore salvataggio copione: " + e.message);
+                   return;
+               }
+           } else if (isElectron()) {
+               try {
+                   const electron = (window as any).electronAPI;
+                   const dir = AppGlobals.Playlistpath || (await electron.getPath('downloads')).replace(/\\/g, '/');
+                   const fullPath = `${dir}/${fileName}`.replace(/\/\//g, '/');
+                   await electron.writeFile(fullPath, html);
+                   if (!isAutoSave) setSaveSuccessModal({ isOpen: true, location: fullPath, fileName });
+                   fullPathForPlaylist = fullPath;
+               } catch (e: any) {
+                   if (!isAutoSave) alert("Errore salvataggio copione: " + e.message);
+                   return;
+               }
+           }
+      }
+
+      // 1) Update playlist's internal state
+      const savedScriptState = `${fullPathForPlaylist};${Math.round(size.width)};${Math.round(size.height)};${Math.round(pos.x)};${Math.round(pos.y)}`;
+      playlistActions.setScriptFilePath(savedScriptState);
+
+      // 2) Write playlist to disk immediately
+      if (playlistState.sourceFilePath) {
+          const content = playlistActions.generatePlaylistContent();
+          try {
+              if (isAndroid) {
+                  await writeTextFile(playlistState.sourceFilePath, playlistState.sourceFileName || "playlist.txt", content, playlistState.sourceDirectory);
+              } else if (isElectron() && window.electronAPI) {
+                  await window.electronAPI.writeFile(playlistState.sourceFilePath, content);
+              }
+          } catch(e) {
+              console.error("Autosave of playlist failed:", e);
+          }
+      }
   };
 
   const performPlay = useCallback((source: 'local' | 'remote' = 'local') => {
@@ -1191,7 +1266,15 @@ const App: React.FC = () => {
       }
   };
 
-  const handlePlaylistLoaded = (newSongs: Song[], newSfx: SfxItem[], fileName?: string, path?: string, directory?: Directory, fromDisk: boolean = true) => {
+  const handlePlaylistLoaded = (
+      newSongs: Song[], 
+      newSfx: SfxItem[], 
+      fileName?: string, 
+      path?: string, 
+      directory?: Directory, 
+      scriptPath?: string | null,
+      fromDisk: boolean = true
+  ) => {
     audioControls.hardReset();
     if (audioRef.current) audioRef.current.src = "";
     // RESET TIMER ON LOAD
@@ -1217,11 +1300,33 @@ const App: React.FC = () => {
         AppGlobals.Playlistpath = "";
     }
     AppGlobals.PlaylistLog = AppGlobals.Playlistpath + "Log_" + AppGlobals.Playlistfilename;
-    playlistActions.loadPlaylist(newSongs, newSfx, fileName, path, directory, fromDisk);
+    playlistActions.loadPlaylist(newSongs, newSfx, fileName, path, directory, fromDisk, scriptPath);
     if (remoteSync.role === 'master' && remoteSync.clientCount > 0) {
         remoteSync.sendPlaylist(newSongs, newSfx, path || undefined);
     }
     checkLogFileExistence();
+
+    if (scriptPath && fromDisk) {
+        const actualPath = scriptPath.split(';')[0];
+        const sFileName = extractFileName(actualPath);
+        readTextFile(actualPath, sFileName, directory).then(html => {
+            setLoadedScriptHtml(html);
+            setScriptPanelOpen(true);
+            if (!isAndroid) {
+                setNotesPinned(true);
+            }
+            // Ask electron to maximize optionally
+            if (window.electronAPI && (window as any).electronAPI.maximize) {
+                (window as any).electronAPI.maximize();
+            }
+        }).catch(err => {
+            console.error("Errore caricamento copione:", err);
+            setLoadedScriptHtml('');
+        });
+    } else if (fromDisk) {
+        setLoadedScriptHtml('');
+        setScriptPanelOpen(false);
+    }
   };
 
   const handleLoadSingle = (file: File) => {
@@ -1598,13 +1703,40 @@ const App: React.FC = () => {
   };
 
   // Helper for raw editor saving
-  const parsePlaylistContent = (content: string): { songs: Song[], sfx: SfxItem[] } => {
+  const parsePlaylistContent = (content: string): { songs: Song[], sfx: SfxItem[], scriptPath: string | null } => {
     const lines = content.split('\n');
     const songs: Song[] = [];
     const sfx: SfxItem[] = new Array(6).fill(undefined);
+    let scriptPath: string | null = null;
+    let isParsingNotes = false;
+    let currentNotePointer: string | null = null;
+    let currentNoteContent: string[] = [];
+    const notesMap: Record<string, string> = {}; 
 
     lines.forEach((line, index) => {
-        if (!line.trim()) return;
+        const trimmed = line.trim();
+        
+        if (trimmed.startsWith('SCRIPT_PATH;')) {
+            scriptPath = trimmed.substring(12).trim();
+            return;
+        }
+
+        if (trimmed.startsWith('[NOTE_')) {
+            if (currentNotePointer) {
+                notesMap[currentNotePointer] = currentNoteContent.join('\n');
+            }
+            isParsingNotes = true;
+            currentNotePointer = trimmed;
+            currentNoteContent = [];
+            return;
+        }
+
+        if (isParsingNotes && currentNotePointer) {
+            currentNoteContent.push(trimmed);
+            return;
+        }
+
+        if (!trimmed) return;
         const parts = line.split(';');
         
         if (parts[0] === 'SFX') {
@@ -1670,7 +1802,19 @@ const App: React.FC = () => {
             }
         }
     });
-    return { songs, sfx };
+
+    if (currentNotePointer) {
+        notesMap[currentNotePointer] = currentNoteContent.join('\n');
+    }
+
+    // Apply notes to songs
+    songs.forEach(song => {
+        if (song.note && song.note.startsWith('[NOTE_')) {
+            song.note = notesMap[song.note] || '';
+        }
+    });
+
+    return { songs, sfx, scriptPath };
   };
 
   // --- FIX: SMART RAW EDITOR SAVE ---
@@ -1733,7 +1877,7 @@ const App: React.FC = () => {
 
   // --- PINNED LOGIC FOR DESKTOP ---
   const isPinnedDesktop = chatPinned && !isAndroid;
-  const isNotesPinnedDesktop = notesPinned && !isAndroid;
+  const isNotesPinnedDesktop = (notesPinned || !!(loadedScriptHtml && loadedScriptHtml.trim())) && !isAndroid;
 
   if (!playlistState.isPlaylistLoaded) {
       return (
@@ -1873,7 +2017,12 @@ const App: React.FC = () => {
                         setNotesPinned(newVal);
                         if (!newVal && !chatPinned) setLeftPanelWidth(40);
                     }}
-                    isNotesPinned={notesPinned}
+                    isNotesPinned={notesPinned || !!(loadedScriptHtml && loadedScriptHtml.trim())}
+                    hasScript={!!(loadedScriptHtml && loadedScriptHtml.trim())}
+                    onRequestOpenScript={() => {
+                        setScriptPanelOpen(true);
+                        if (!isAndroid) setNotesPinned(true);
+                    }}
                     // PASS REPOSITION HANDLER
                     onRepositionRequest={handleRepositionRequest}
                 />
@@ -2085,15 +2234,15 @@ const App: React.FC = () => {
                     </div>
                 )}
 
-                <div className={`flex flex-col min-h-0 bg-slate-900/50 ${isCompactView && appMode === 'presentation' ? 'shrink-0 border-b border-slate-800' : 'flex-1'} ${isControlsDisabled ? 'pointer-events-none' : ''}`}>
+                <div className={`flex flex-col min-h-0 bg-slate-900/50 ${isCompactView && appMode === 'presentation' && !scriptPanelOpen ? 'shrink-0 border-b border-slate-800' : 'flex-1'} ${isControlsDisabled ? 'pointer-events-none' : ''}`}>
                     {appMode === 'editing' && (
                         <div className="p-2 border-b border-slate-800 flex items-center gap-2 bg-slate-800/30">
                             <Zap className="w-4 h-4 text-amber-400" />
                             <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">{t.sfx_section}</span>
                         </div>
                     )}
-                    <div className={`overflow-y-auto ${isCompactView && appMode === 'presentation' ? 'p-1' : 'flex-1 p-2'}`}>
-                        <div className={`${isCompactView && appMode === 'presentation' ? 'flex flex-row w-full justify-evenly items-center' : 'grid grid-cols-3 gap-2 h-full'}`}>
+                    <div className={`overflow-y-auto relative ${isCompactView && appMode === 'presentation' && !scriptPanelOpen ? 'p-1' : 'flex-1 p-2'}`}>
+                        <div className={`${scriptPanelOpen && appMode === 'presentation' ? 'flex flex-col w-56 gap-2 absolute top-2 left-2 z-10' : (isCompactView && appMode === 'presentation' ? 'flex flex-row w-full justify-evenly items-center' : 'grid grid-cols-3 gap-2 h-full')}`}>
                             {playlistState.sfxItems.map((sfx, idx) => {
                                 if (isCompactView && appMode === 'presentation' && (!sfx || !sfx.url)) return null;
                                 const isPlaying = activeSfxIndices.has(idx); 
@@ -2107,7 +2256,7 @@ const App: React.FC = () => {
                                         key={idx}
                                         onClick={() => requestSfxPlay(idx)}
                                         className={`relative group rounded-xl border-2 flex flex-col items-center justify-center p-2 transition-all active:scale-95 shadow-lg
-                                            ${isCompactView && appMode === 'presentation' ? 'w-24 h-12' : 'h-20'} 
+                                            ${scriptPanelOpen && appMode === 'presentation' ? 'w-full h-20 shrink-0' : (isCompactView && appMode === 'presentation' ? 'w-24 h-12' : 'h-20')} 
                                             ${hasFile
                                                 ? (isPlaying 
                                                     ? 'bg-lime-900/40 border-lime-500/80 shadow-[0_0_15px_rgba(132,204,22,0.2)]' 
@@ -2204,7 +2353,7 @@ const App: React.FC = () => {
                                       }
                                   }}
                                   readOnly={isControlsDisabled}
-                                  onClose={() => {
+                                  onClose={!!(loadedScriptHtml && loadedScriptHtml.trim()) ? undefined : () => {
                                       setNotesPinned(false);
                                       if (!chatPinned) setLeftPanelWidth(40);
                                   }}
@@ -2344,6 +2493,39 @@ const App: React.FC = () => {
               onAnswerCall={handleAnswerCall}
           />
       )}
+
+      {/* SCRIPT WINDOW (Fase 1) */}
+      {scriptPanelOpen && (() => {
+          let initPos = undefined;
+          let initSize = undefined;
+          let path = playlistState.scriptFilePath;
+
+          if (playlistState.scriptFilePath) {
+              const parts = playlistState.scriptFilePath.split(';');
+              if (parts.length >= 5) {
+                  path = parts[0];
+                  const w = parseInt(parts[1]);
+                  const h = parseInt(parts[2]);
+                  const x = parseInt(parts[3]);
+                  const y = parseInt(parts[4]);
+                  if (!isNaN(w) && !isNaN(h)) initSize = { width: w, height: h };
+                  if (!isNaN(x) && !isNaN(y)) initPos = { x: x, y: y };
+              } else if (parts.length > 0) {
+                  path = parts[0];
+              }
+          }
+
+          return (
+              <ScriptPanel 
+                  isOpen={scriptPanelOpen} 
+                  onClose={() => setScriptPanelOpen(false)}
+                  onSaveScript={handleSaveScript}
+                  initialPosition={initPos}
+                  initialSize={initSize}
+                  initialHtml={loadedScriptHtml}
+              />
+          );
+      })()}
     </div>
   );
 };

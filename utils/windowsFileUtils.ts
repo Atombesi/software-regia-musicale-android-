@@ -107,7 +107,6 @@ export const writeWindowsTextFile = async (basePath: string, fileName: string, c
         await Filesystem.writeFile({
             path: fullPath,
             data: content,
-            directory: undefined, 
             encoding: Encoding.UTF8,
             recursive: false
         });
@@ -179,7 +178,6 @@ export const readWindowsTextFile = async (basePath: string, fileName: string): P
     try {
         const res = await Filesystem.readFile({
             path: fullPath,
-            directory: undefined,
             encoding: Encoding.UTF8
         });
         return res.data as string;

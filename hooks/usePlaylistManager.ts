@@ -5,9 +5,13 @@ import { formatPathForSaving } from '../utils/platformUtils';
 import { Directory } from '@capacitor/filesystem';
 
 // Helper function to generate content string consistently
-const generateContentString = (songs: Song[], sfxItems: SfxItem[]) => {
+const generateContentString = (songs: Song[], sfxItems: SfxItem[], scriptFilePath?: string | null) => {
     let content = "";
     let notesSection = "";
+
+    if (scriptFilePath) {
+        content += `SCRIPT_PATH;${scriptFilePath}\n`;
+    }
 
     songs.forEach((s, index) => {
         if (s.type === 'separator') {
@@ -76,14 +80,15 @@ export const usePlaylistManager = () => {
     const [sourceFilePath, setSourceFilePath] = useState<string | null>(null);
     const [sourceDirectory, setSourceDirectory] = useState<Directory | undefined>(undefined);
     const [isPlaylistLoaded, setIsPlaylistLoaded] = useState(false);
+    const [scriptFilePath, setScriptFilePath] = useState<string | null>(null);
 
     // Dirty state tracking (Snapshot of the file on disk)
     const [savedContentSnapshot, setSavedContentSnapshot] = useState<string>("");
 
     // Calculate current content string on every change
     const currentContent = useMemo(() => {
-        return generateContentString(songs, sfxItems);
-    }, [songs, sfxItems]);
+        return generateContentString(songs, sfxItems, scriptFilePath);
+    }, [songs, sfxItems, scriptFilePath]);
 
     // Derived state: True if current state differs from the saved snapshot
     const hasUnsavedChanges = currentContent !== savedContentSnapshot;
@@ -96,7 +101,8 @@ export const usePlaylistManager = () => {
         fileName?: string, 
         path?: string, 
         directory?: Directory,
-        fromDisk: boolean = true // If true, updates the saved snapshot (reset dirty state)
+        fromDisk: boolean = true, // If true, updates the saved snapshot (reset dirty state)
+        scriptPath?: string | null
     ) => {
         setSongs(newSongs);
         setSfxItems(newSfx);
@@ -113,17 +119,19 @@ export const usePlaylistManager = () => {
         if (fileName) setSourceFileName(fileName);
         if (path) setSourceFilePath(path);
         if (directory) setSourceDirectory(directory);
+        if (scriptPath !== undefined) setScriptFilePath(scriptPath);
         
         if (fromDisk) {
-            setSavedContentSnapshot(generateContentString(newSongs, newSfx));
+            setSavedContentSnapshot(generateContentString(newSongs, newSfx, scriptPath !== undefined ? scriptPath : scriptFilePath));
         }
 
+
         setIsPlaylistLoaded(true);
-    }, []);
+    }, [scriptFilePath]);
 
     const markAsSaved = useCallback(() => {
-        setSavedContentSnapshot(generateContentString(songs, sfxItems));
-    }, [songs, sfxItems]);
+        setSavedContentSnapshot(generateContentString(songs, sfxItems, scriptFilePath));
+    }, [songs, sfxItems, scriptFilePath]);
 
     const resetShow = useCallback(() => {
         setPlayedSongIds(new Set());
@@ -244,13 +252,14 @@ export const usePlaylistManager = () => {
 
     // --- FILE GENERATION ---
     const generatePlaylistContent = useCallback(() => {
-        return generateContentString(songs, sfxItems);
-    }, [songs, sfxItems]);
+        return generateContentString(songs, sfxItems, scriptFilePath);
+    }, [songs, sfxItems, scriptFilePath]);
 
     const clearPlaylist = useCallback(() => {
         setSongs([]);
         setSavedContentSnapshot(""); 
         setIsPlaylistLoaded(false);
+        setScriptFilePath(null);
     }, []);
 
     return {
@@ -263,7 +272,8 @@ export const usePlaylistManager = () => {
             sourceFilePath,
             sourceDirectory,
             isPlaylistLoaded,
-            hasUnsavedChanges // Expose dirty state
+            hasUnsavedChanges, // Expose dirty state
+            scriptFilePath
         },
         actions: {
             loadPlaylist,
@@ -283,6 +293,7 @@ export const usePlaylistManager = () => {
             setSourceFileName, 
             setSourceFilePath,
             setSourceDirectory,
+            setScriptFilePath,
             markAsSaved // Expose save action
         }
     };

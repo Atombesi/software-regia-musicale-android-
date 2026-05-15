@@ -34,6 +34,13 @@ app.whenReady().then(() => {
     return filePath;
   });
 
+  ipcMain.handle('window:maximize', () => {
+    const win = BrowserWindow.getFocusedWindow();
+    if (win && !win.isMaximized()) {
+        win.maximize();
+    }
+  });
+
   createWindow();
 
   app.on('activate', () => {

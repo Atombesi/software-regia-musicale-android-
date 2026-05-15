@@ -384,6 +384,12 @@ app.whenReady().then(() => {
       }
   });
 
+  ipcMain.handle('window:maximize', () => {
+      if (mainWindow && !mainWindow.isMaximized()) {
+          mainWindow.maximize();
+      }
+  });
+
   createWindow();
 
   app.on('activate', function () {
