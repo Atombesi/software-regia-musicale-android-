@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { X, FileText, Minimize2, Maximize2, Move, Minus, Edit3, Save, MessageSquarePlus, Highlighter, Play, Pause, List, FilePlus, BookOpen, Upload, MapPin, Crosshair } from 'lucide-react';
 import mammoth from 'mammoth/mammoth.browser.js';
+import { Language, translations } from '../translations';
 
 interface ScriptPanelProps {
     isOpen: boolean;
@@ -12,9 +13,11 @@ interface ScriptPanelProps {
     initialPosition?: {x: number, y: number};
     initialSize?: {width: number, height: number};
     initialHtml?: string;
+    language?: Language;
 }
 
-const ScriptPanel: React.FC<ScriptPanelProps> = ({ isOpen, onClose, appMode, leftPanelWidth, isCompactView, onSaveScript, initialPosition, initialSize, initialHtml }) => {
+const ScriptPanel: React.FC<ScriptPanelProps> = ({ isOpen, onClose, appMode, leftPanelWidth, isCompactView, onSaveScript, initialPosition, initialSize, initialHtml, language = 'it' }) => {
+    const t = translations[language];
     const [isMaximized, setIsMaximized] = useState(false);
     const [isMinimized, setIsMinimized] = useState(false);
     const [isDarkMode, setIsDarkMode] = useState(true);
@@ -112,8 +115,8 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({ isOpen, onClose, appMode, lef
                         if (multiData) {
                             try {
                                 const items = JSON.parse(multiData);
-                                const typeIcons: Record<string, string> = { 'playlist': '🎵', 'sfx': '🔊', 'light': '💡', 'proj': '📽', 'info': 'ℹ️', 'multi': '⚡' };
-                                label = items.map((item: any) => typeIcons[item.type] || '📍').join(' ');
+                                const typeIcons: Record<string, string> = { 'playlist': '♫', 'sfx': '🔊', 'light': '💡', 'proj': '📽', 'info': 'ℹ️', 'multi': '⚡' };
+                                label = items.map((item: any) => `${typeIcons[item.type] || '📍'} ${item.title || ''}`.trim()).join(' | ');
                             } catch (e) {}
                         }
                     } else if (type === 'info') {
@@ -191,6 +194,9 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({ isOpen, onClose, appMode, lef
     const [markerTitle, setMarkerTitle] = useState('');
     const [markerNote, setMarkerNote] = useState('');
     const [markerPinned, setMarkerPinned] = useState(false);
+    const [preselectedTypes, setPreselectedTypes] = useState<string[]>([]);
+    const [pendingHighlight, setPendingHighlight] = useState<string | null>(null);
+    const [highlightNote, setHighlightNote] = useState('');
 
     const [isAutoSaving, setIsAutoSaving] = useState(false);
     const [isPaginationMode, setIsPaginationMode] = useState(false);
@@ -204,14 +210,26 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({ isOpen, onClose, appMode, lef
     const [gotoPageNum, setGotoPageNum] = useState<string>('');
 
     // Call this helper to commit changes and auto-save silently
-    const commitChange = () => {
+    const commitChange = (preservedScroll?: number) => {
         if (contentRef.current) {
+            const container = contentRef.current.parentElement;
+            const scrollPos = preservedScroll !== undefined ? preservedScroll : container?.scrollTop;
+
             const h = contentRef.current.innerHTML;
             setScriptContentHtml(h);
             setHasUnsavedChanges(false);
             setIsAutoSaving(true);
             if (onSaveScript) onSaveScript(h, position, size, true);
             setTimeout(() => setIsAutoSaving(false), 2000);
+
+            if (container && scrollPos !== undefined) {
+                // Restore immediately
+                container.scrollTop = scrollPos;
+                // And also after React's render phase
+                setTimeout(() => {
+                    if (container) container.scrollTop = scrollPos;
+                }, 10);
+            }
         }
     };
 
@@ -232,8 +250,10 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({ isOpen, onClose, appMode, lef
 
         const up = () => {
             if (draggedNote.current) {
+                const container = contentRef.current?.parentElement;
+                const scrollPos = container?.scrollTop;
                 draggedNote.current = null;
-                commitChange();
+                commitChange(scrollPos);
             }
         };
 
@@ -353,6 +373,10 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({ isOpen, onClose, appMode, lef
             if (isAutoScrolling) {
                 isDeviatedRef.current = true;
                 setIsDeviated(true);
+                isCentering.current = true;
+                setTimeout(() => {
+                    isCentering.current = false;
+                }, 1000);
             }
 
             if (pageNum <= 0) {
@@ -455,12 +479,12 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({ isOpen, onClose, appMode, lef
                 const text = await file.text();
                 setScriptContentHtml(`<p>${text.replace(/\n/g, '<br/>')}</p>`);
             } else {
-                alert('Formato non supportato. Usa DOCX, TXT, HTML o RTF.');
+                alert(t.sp_err_format);
             }
             setHasUnsavedChanges(true);
         } catch (err) {
             console.error("Errore lettura file:", err);
-            alert('Errore durante la lettura del file. Assicurati che sia un file valido.');
+            alert(t.sp_err_read);
         }
         if (fileInputRef.current) fileInputRef.current.value = '';
     };
@@ -504,6 +528,9 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({ isOpen, onClose, appMode, lef
         if (isPaginationMode && !target.classList.contains('script-marker') && !target.closest('.script-marker')) {
             const range = document.caretRangeFromPoint(e.clientX, e.clientY);
             if (range && contentRef.current) {
+                const container = contentRef.current?.parentElement;
+                const scrollPos = container?.scrollTop;
+                
                 const selection = window.getSelection();
                 selection?.removeAllRanges();
                 selection?.addRange(range);
@@ -518,7 +545,7 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({ isOpen, onClose, appMode, lef
                          p.innerHTML = `Pagina ${idx + 1}`;
                     });
                 }
-                commitChange();
+                commitChange(scrollPos);
                 return;
             }
         }
@@ -545,14 +572,14 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({ isOpen, onClose, appMode, lef
                 const rawLabel = markerNode.childNodes[0]?.textContent?.trim() || markerNode.innerText || '';
                 const typeIcons: Record<string, string> = {
                     'time': '⏱',
-                    'playlist': '🎵',
+                    'playlist': '♫',
                     'sfx': '🔊',
                     'light': '💡',
                     'proj': '📽',
                     'note': '📝'
                 };
                 const icon = typeIcons[type] || '📍';
-                let title = rawLabel.startsWith(icon) ? rawLabel.substring(icon.length).trim() : rawLabel;
+                let title = rawLabel.startsWith(icon) ? rawLabel.substring(icon.length).trim() : (rawLabel.startsWith('🎵') ? rawLabel.substring(1).trim() : rawLabel);
                 
                 if (type === 'note') {
                     setMultiItems([]);
@@ -577,6 +604,8 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({ isOpen, onClose, appMode, lef
         e.preventDefault();
         const selection = window.getSelection();
         if (selection && selection.rangeCount > 0 && !selection.isCollapsed) {
+            setPendingHighlight(null);
+            setHighlightNote('');
             setContextMenu({ x: e.clientX, y: e.clientY, type: 'highlight', range: selection.getRangeAt(0).cloneRange() });
         } else if (selection && selection.rangeCount > 0) {
             setEditingMarkerNode(null);
@@ -587,6 +616,7 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({ isOpen, onClose, appMode, lef
             setMarkerNote('');
             setMarkerPinned(false);
             setMultiItems([]);
+            setPreselectedTypes([]);
             setContextMenu(null);
         }
     };
@@ -603,12 +633,16 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({ isOpen, onClose, appMode, lef
             setMarkerNote('');
             setMarkerPinned(false);
             setMultiItems([]);
+            setPreselectedTypes([]);
             setContextMenu(null);
         }
     };
 
     const applyHighlight = (className: string) => {
         if (!contextMenu?.range) return;
+        const container = contentRef.current?.parentElement;
+        const scrollPos = container?.scrollTop;
+
         const selection = window.getSelection();
         selection?.removeAllRanges();
         selection?.addRange(contextMenu.range);
@@ -635,16 +669,36 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({ isOpen, onClose, appMode, lef
                 // Fallback: try to execute removeFormat
                 document.execCommand('removeFormat', false, '');
             }
-            commitChange();
+            commitChange(scrollPos);
+            setContextMenu(null);
         } else {
-            let text = selection?.toString() || '';
-            if (text) {
-                const html = `<span class="${className}">${text}</span>`;
-                document.execCommand('insertHTML', false, html);
-                commitChange();
+            setPendingHighlight(className);
+        }
+    };
+
+    const confirmHighlight = () => {
+        if (!contextMenu?.range || !pendingHighlight) return;
+        const container = contentRef.current?.parentElement;
+        const scrollPos = container?.scrollTop;
+
+        const selection = window.getSelection();
+        selection?.removeAllRanges();
+        selection?.addRange(contextMenu.range);
+        
+        let text = selection?.toString() || '';
+        if (text) {
+            let noteHtml = '';
+            if (highlightNote.trim()) {
+                const cleanNote = highlightNote.trim().replace(/"/g, '&quot;');
+                noteHtml = `&nbsp;<span class="script-marker" contenteditable="false" data-type="note" data-note="${cleanNote}" data-pinned="true"><span class="multi-subitem">📝 Nota</span><span class="pinned-note-box" style="left: 0px; top: 30px; width: 200px; height: auto; min-height: 50px;">${cleanNote}</span></span>&nbsp;`;
             }
+            const html = `<span class="${pendingHighlight}">${text}</span>${noteHtml}`;
+            document.execCommand('insertHTML', false, html);
+            commitChange(scrollPos);
         }
         setContextMenu(null);
+        setPendingHighlight(null);
+        setHighlightNote('');
     };
 
 
@@ -669,11 +723,14 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({ isOpen, onClose, appMode, lef
 
     const deleteMarker = () => {
         if (editingMarkerNode) {
-            if (window.confirm("Vuoi rimuovere questo marker?")) {
+            if (window.confirm(t.sp_confirm_remove_marker)) {
+                const container = contentRef.current?.parentElement;
+                const scrollPos = container?.scrollTop;
+                
                 const parent = editingMarkerNode.parentNode;
                 editingMarkerNode.remove();
                 if (parent) parent.normalize();
-                commitChange();
+                commitChange(scrollPos);
             }
         }
         setMarkerPrompt(null);
@@ -681,8 +738,11 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({ isOpen, onClose, appMode, lef
     };
 
     const insertMarker = () => {
+        const container = contentRef.current?.parentElement;
+        const scrollPos = container?.scrollTop;
+
         const typeIcons: Record<string, string> = {
-            'playlist': '🎵',
+            'playlist': '♫',
             'sfx': '🔊',
             'light': '💡',
             'proj': '📽',
@@ -730,7 +790,7 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({ isOpen, onClose, appMode, lef
 
             editingMarkerNode.innerHTML = labelText;
             if (isPinned) {
-                 editingMarkerNode.innerHTML += `<div class="pinned-note-box" style="${style}">${cleanNote}</div>`;
+                 editingMarkerNode.innerHTML += `<span class="pinned-note-box" style="${style}">${cleanNote}</span>`;
             }
         } else if (markerPrompt?.range) {
             // Insert new marker
@@ -740,14 +800,14 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({ isOpen, onClose, appMode, lef
             
             let htmlInner = labelText;
             if (isPinned) {
-                 htmlInner += `<div class="pinned-note-box" style="left: 0px; top: 30px; width: 200px; height: 100px;">${cleanNote}</div>`;
+                 htmlInner += `<span class="pinned-note-box" style="left: 0px; top: 30px; width: 200px; height: 100px;">${cleanNote}</span>`;
             }
 
             const html = `&nbsp;<span class="script-marker" contenteditable="false" data-type="${finalType}" data-note="${cleanNote}" data-pinned="${isPinned}"${multiDataAttr}>${htmlInner}</span>&nbsp;`;
             document.execCommand('insertHTML', false, html);
         }
         
-        commitChange();
+        commitChange(scrollPos);
         setMarkerPrompt(null);
         setEditingMarkerNode(null);
     };
@@ -770,7 +830,7 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({ isOpen, onClose, appMode, lef
                     className="flex items-center gap-2 px-4 py-2 bg-slate-800 border border-emerald-500/50 hover:border-emerald-500 rounded-full shadow-lg shadow-emerald-900/20 text-emerald-400 font-bold transition-all"
                 >
                     <FileText className="w-4 h-4" />
-                    Copione Minimizzato
+                    {t.sp_minimized}
                 </button>
             </div>
         );
@@ -803,37 +863,37 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({ isOpen, onClose, appMode, lef
                     <div className="flex items-center gap-2">
                         <FileText className="w-4 h-4 text-emerald-400" />
                         <span className="text-sm font-bold text-slate-300">
-                            Copione - Pagina {currentPage}
+                            {t.sp_script_page} {currentPage}
                         </span>
                     </div>
+                </div>
+                <div className="flex flex-1 justify-center items-center gap-2 pointer-events-none">
+                    {!isMaximized && <Move className="w-4 h-4 opacity-30" />}
                     {nextMarkerPage !== null && (
-                        <span className="text-xs font-semibold text-slate-500 bg-slate-900/50 px-2 py-0.5 rounded border border-slate-700/50 shadow-inner">
-                            Prossimo: pag {nextMarkerPage}
+                        <span className="text-xs font-semibold text-slate-400 bg-slate-900/80 px-2 py-0.5 rounded border border-slate-700/50 shadow-inner">
+                            {t.sp_next_page} {nextMarkerPage}
                         </span>
                     )}
-                </div>
-                <div className="flex flex-1 justify-center pointer-events-none opacity-30">
-                    {!isMaximized && <Move className="w-4 h-4" />}
                 </div>
                 <div className="flex items-center gap-2 flex-1 justify-end">
                     <button 
                         onClick={(e) => { e.stopPropagation(); setIsMinimized(true); }}
                         className="p-1 hover:bg-slate-700 rounded text-slate-400 hover:text-white transition-colors"
-                        title="Riduci a icona"
+                        title={t.sp_minimize}
                     >
                         <Minus className="w-4 h-4" />
                     </button>
                     <button 
                         onClick={(e) => { e.stopPropagation(); setIsMaximized(!isMaximized); }}
                         className="p-1 hover:bg-slate-700 rounded text-slate-400 hover:text-white transition-colors"
-                        title={isMaximized ? "Finestra mobile" : "Massimizza a lato"}
+                        title={isMaximized ? t.sp_floating : t.sp_dock}
                     >
                         {isMaximized ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
                     </button>
                     <button 
                         onClick={(e) => { e.stopPropagation(); onClose(); }}
                         className="p-1 hover:bg-red-900/80 rounded text-slate-400 hover:text-white transition-colors"
-                        title="Chiudi pannello"
+                        title={t.sp_close}
                     >
                         <X className="w-4 h-4" />
                     </button>
@@ -845,7 +905,7 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({ isOpen, onClose, appMode, lef
                 <button 
                     onClick={() => setIsDarkMode(!isDarkMode)}
                     className="p-1.5 bg-slate-700 text-slate-300 hover:text-white hover:bg-slate-600 rounded transition-colors border border-slate-600 shadow-sm"
-                    title="Alterna Tema (Chiaro/Scuro)"
+                    title={t.sp_theme}
                 >
                     {isDarkMode ? '☀️' : '🌙'}
                 </button>
@@ -855,7 +915,7 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({ isOpen, onClose, appMode, lef
                         <button 
                             onClick={() => fileInputRef.current?.click()}
                             className="p-1.5 bg-slate-700 text-slate-300 hover:text-white hover:bg-slate-600 rounded transition-colors border border-slate-600 shadow-sm"
-                            title="Carica Copione"
+                            title={t.sp_load}
                         >
                             <Upload className="w-4 h-4 text-sky-400" />
                         </button>
@@ -868,25 +928,25 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({ isOpen, onClose, appMode, lef
                         <button
                             onClick={() => setIsAutoScrolling(!isAutoScrolling)}
                             className={`px-3 py-1 flex items-center gap-1 text-xs font-bold rounded transition-colors border shadow-sm ${isAutoScrolling ? 'bg-amber-600 border-amber-500 text-white' : 'bg-slate-700 border-slate-600 text-slate-300 hover:bg-slate-600'}`}
-                            title={isAutoScrolling ? "Pausa Scorrimento" : "Avvia Scorrimento"}
+                            title={isAutoScrolling ? t.sp_pause_scroll : t.sp_start_scroll}
                         >
                             {isAutoScrolling ? <Pause className="w-3 h-3" /> : <Play className="w-3 h-3" />}
-                            {isAutoScrolling ? 'Pausa Gobbo' : 'Gobbo'}
+                            {isAutoScrolling ? t.sp_pause_tele : t.sp_tele}
                         </button>
                         {isAutoScrolling && isDeviated && (
                             <>
                                 <button 
                                     onClick={handleCenterScroll}
                                     className="px-2 py-1 bg-sky-600 text-white font-bold text-xs rounded hover:bg-sky-500 flex items-center gap-1 ml-1"
-                                    title="Torna alla posizione originale del gobbo"
+                                    title={t.sp_center_tele}
                                 >
                                     <Crosshair className="w-3 h-3" />
-                                    Centra
+                                    {t.sp_center}
                                 </button>
                                 <button 
                                     onClick={handleSyncScroll}
                                     className="px-2 py-1 bg-emerald-600 text-white font-bold text-xs rounded hover:bg-emerald-500 flex items-center gap-1 ml-1 shadow-sm"
-                                    title="Riallinea il timing alla posizione corrente"
+                                    title={t.sp_realign_tele}
                                 >
                                     <Play className="w-3 h-3" fill="currentColor" />
                                     Riallinea
@@ -913,7 +973,7 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({ isOpen, onClose, appMode, lef
                 <button 
                     onClick={() => setShowMarkersList(!showMarkersList)}
                     className={`p-1.5 flex items-center justify-center rounded transition-colors border shadow-sm ${showMarkersList ? 'bg-sky-600 border-sky-500 text-white' : 'bg-slate-700 border-slate-600 text-slate-300 hover:bg-slate-600'}`}
-                    title="Sommario Markers"
+                    title={t.sp_markers_summary}
                 >
                     <List className="w-4 h-4 text-emerald-400" />
                 </button>
@@ -925,7 +985,7 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({ isOpen, onClose, appMode, lef
                         <button 
                             onClick={() => setIsPaginationMode(!isPaginationMode)}
                             className={`p-1.5 flex items-center justify-center rounded transition-colors border shadow-sm ${isPaginationMode ? 'bg-amber-600 border-amber-500 text-white' : 'bg-slate-700 border-slate-600 text-slate-300 hover:bg-slate-600'}`}
-                            title="Modalità Impaginazione"
+                            title={t.sp_pagination_mode}
                         >
                             <FilePlus className="w-4 h-4 text-amber-400" />
                         </button>
@@ -936,7 +996,7 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({ isOpen, onClose, appMode, lef
                 <button 
                     onClick={() => { setGotoPrompt(true); setGotoPageNum(''); }}
                     className="p-1.5 flex items-center justify-center rounded transition-colors border shadow-sm bg-slate-700 border-slate-600 text-slate-300 hover:bg-slate-600"
-                    title="Vai a Pagina"
+                    title={t.sp_goto_page}
                 >
                     <MapPin className="w-4 h-4 text-rose-400" />
                 </button>
@@ -945,8 +1005,8 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({ isOpen, onClose, appMode, lef
 
                 <button 
                     onClick={() => setIsEditing(!isEditing)}
-                    className={`p-1.5 flex items-center justify-center rounded transition-colors border shadow-sm ${isEditing ? 'bg-indigo-600 border-indigo-500 text-white' : 'bg-slate-700 border-slate-600 text-slate-300 hover:bg-slate-600'}`}
-                    title="Modifica Copione"
+                    className={`p-1.5 flex items-center justify-center rounded transition-colors border shadow-sm ${isEditing ? 'bg-emerald-600 border-emerald-500 text-white shadow-inner' : 'bg-slate-700 border-slate-600 text-slate-300 hover:bg-slate-600'}`}
+                    title={t.sp_edit_script}
                 >
                     <Edit3 className="w-4 h-4 text-indigo-400" />
                 </button>
@@ -966,17 +1026,17 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({ isOpen, onClose, appMode, lef
                         className={`px-3 py-1 flex items-center gap-1 text-xs font-bold rounded transition-colors border shadow-sm ${!hasUnsavedChanges && !isAutoSaving ? 'bg-slate-700 border-slate-600 text-slate-500 cursor-not-allowed opacity-50' : (isAutoSaving ? 'bg-emerald-400 border-emerald-300 text-slate-900 animate-pulse' : 'bg-emerald-700 border-emerald-600 text-white hover:bg-emerald-600')}`}
                     >
                         <Save className="w-3 h-3" />
-                        Salva
+                        {t.sp_save}
                     </button>
                 )}
                 <div className="flex-1"></div>
                 {isEditing && (
-                    <span className="text-xs text-slate-400 italic px-2">Doppio click / Selezione per Highlight e Marker</span>
+                    <span className="text-xs text-slate-400 italic px-2">{t.sp_double_click_hint}</span>
                 )}
             </div>
 
             {/* Content Area */}
-            <div className={`flex-1 flex overflow-hidden ${isDarkMode ? 'bg-[#121212] text-[#e0e0e0]' : 'bg-slate-100 text-slate-900'} ${isPaginationMode ? (isDarkMode ? 'bg-[#1e1e1e] ring-inset ring-2 ring-amber-500/50' : 'bg-amber-50') : ''}`} onClick={() => setContextMenu(null)}>
+            <div className={`flex-1 flex overflow-hidden ${(isDarkMode ? (isEditing ? 'bg-[#1a1a1a] text-[#e0e0e0]' : 'bg-[#121212] text-[#e0e0e0]') : (isEditing ? 'bg-yellow-50 text-slate-900' : 'bg-slate-100 text-slate-900'))} ${isPaginationMode ? (isDarkMode ? 'bg-[#1e1e1e] ring-inset ring-2 ring-amber-500/50' : 'bg-amber-50') : ''}`} onClick={() => setContextMenu(null)}>
                 <div 
                     className={`flex-1 overflow-y-auto relative custom-scrollbar ${isPaginationMode ? 'pagination-mode' : ''}`}
                     onScroll={handleScroll}
@@ -998,8 +1058,8 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({ isOpen, onClose, appMode, lef
                     ) : (
                         <div className="flex flex-col items-center justify-center min-h-full opacity-50 p-6">
                             <FileText className="w-16 h-16 mb-4 text-slate-500" />
-                            <p className="text-center italic text-slate-600">Nessun copione caricato.</p>
-                            <p className="text-xs text-slate-500 mt-2">Usa il pulsante in alto per importare un file .docx, .rtf, .html o .txt</p>
+                            <p className="text-center italic text-slate-600">{t.sp_no_script}</p>
+                            <p className="text-xs text-slate-500 mt-2">{t.sp_import_hint}</p>
                         </div>
                     )}
                 </div>
@@ -1010,7 +1070,7 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({ isOpen, onClose, appMode, lef
                 <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-slate-800 border border-slate-600 rounded-xl shadow-2xl p-4 w-64 z-[1005] flex flex-col items-center">
                     <h3 className="font-bold text-slate-200 mb-3 text-sm flex items-center gap-2">
                         <MapPin className="w-4 h-4 text-rose-400" />
-                        Vai a Pagina
+                        {t.sp_goto_page}
                     </h3>
                     <input 
                         type="number" 
@@ -1020,11 +1080,11 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({ isOpen, onClose, appMode, lef
                         onChange={e => setGotoPageNum(e.target.value)}
                         onKeyDown={e => { if (e.key === 'Enter') executeGotoPage(); else if (e.key === 'Escape') setGotoPrompt(false); }}
                         className="w-full bg-slate-900 border border-slate-700 text-white p-2 rounded mb-4 text-center font-bold outline-none focus:border-rose-500"
-                        placeholder={`Pagina attuale: ${currentPage}`}
+                        placeholder={`${t.sp_current_page}: ${currentPage}`}
                     />
                     <div className="flex gap-2 w-full">
-                        <button onClick={() => setGotoPrompt(false)} className="flex-1 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded text-sm font-bold transition-colors">Annulla</button>
-                        <button onClick={executeGotoPage} className="flex-1 py-1.5 bg-rose-600 hover:bg-rose-500 text-white rounded text-sm font-bold transition-colors">Vai</button>
+                        <button onClick={() => setGotoPrompt(false)} className="flex-1 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded text-sm font-bold transition-colors">{t.sp_cancel}</button>
+                        <button onClick={executeGotoPage} className="flex-1 py-1.5 bg-rose-600 hover:bg-rose-500 text-white rounded text-sm font-bold transition-colors">{t.sp_go}</button>
                     </div>
                 </div>
             )}
@@ -1034,27 +1094,61 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({ isOpen, onClose, appMode, lef
                 <div 
                     className="fixed z-[1000] bg-slate-800 border border-slate-600 rounded-lg shadow-xl p-1 w-48 flex flex-col"
                     style={{ top: contextMenu.y, left: contextMenu.x }}
+                    onMouseDown={(e) => e.stopPropagation()}
+                    onClick={(e) => e.stopPropagation()}
                 >
                     <div 
                         className="h-4 bg-slate-700/50 rounded-t-md mb-1 cursor-move flex items-center justify-center border-b border-slate-600/50 hover:bg-slate-600 transition-colors"
                         onMouseDown={handleContextMenuDragStart}
-                        title="Trascina menu"
+                        title={t.sp_drag_menu}
                     >
                         <div className="w-8 h-1 rounded-full bg-slate-500"></div>
                     </div>
                     {contextMenu.type === 'highlight' && (
                         <>
-                            <div className="text-xs font-bold text-slate-400 p-2 uppercase tracking-wider">Evidenzia</div>
-                            <button onClick={() => applyHighlight('hl-shout')} className="px-3 py-2 text-left text-sm hover:bg-slate-700 text-slate-200 rounded flex items-center gap-2">
-                                <span className="w-3 h-3 rounded-full bg-yellow-400"></span> Urlato (Giallo)
-                            </button>
-                            <button onClick={() => applyHighlight('hl-enter-exit')} className="px-3 py-2 text-left text-sm hover:bg-slate-700 text-slate-200 rounded flex items-center gap-2">
-                                <span className="w-3 h-3 rounded-full bg-sky-400"></span> Entrata/Uscita
-                            </button>
-                            <div className="w-full h-px bg-slate-600/50 my-1"></div>
-                            <button onClick={() => applyHighlight('clear')} className="px-3 py-2 text-left text-sm hover:bg-slate-700 text-slate-200 rounded flex items-center gap-2">
-                                <X className="w-3 h-3 text-red-400" /> Rimuovi Evidenziazione
-                            </button>
+                            {pendingHighlight ? (
+                                <div className="p-2" onMouseDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
+                                    <label className="text-xs font-bold text-slate-400 block mb-1">{t.sp_note_end_opt}</label>
+                                    <input 
+                                        ref={(el) => el && el.focus()}
+                                        type="text"
+                                        value={highlightNote}
+                                        onChange={(e) => setHighlightNote(e.target.value)}
+                                        onKeyDown={(e) => {
+                                            e.stopPropagation();
+                                            if (e.key === 'Enter') {
+                                                confirmHighlight();
+                                            } else if (e.key === 'Escape') {
+                                                setContextMenu(null);
+                                                setPendingHighlight(null);
+                                                setHighlightNote('');
+                                            }
+                                        }}
+                                        onMouseDown={(e) => e.stopPropagation()}
+                                        onClick={(e) => e.stopPropagation()}
+                                        className="w-full bg-slate-900 border border-slate-700 text-white p-1.5 rounded text-sm outline-none focus:border-indigo-500"
+                                        placeholder={t.sp_note_text}
+                                    />
+                                    <div className="text-[10px] text-slate-500 mt-1 italic">{t.sp_press_enter}</div>
+                                </div>
+                            ) : (
+                                <>
+                                    <div className="text-xs font-bold text-slate-400 p-2 uppercase tracking-wider">{t.sp_highlight}</div>
+                                    <button onClick={() => applyHighlight('hl-shout')} className="px-3 py-2 text-left text-sm hover:bg-slate-700 text-slate-200 rounded flex items-center gap-2">
+                                        <span className="w-3 h-3 rounded-full bg-yellow-400"></span> {t.sp_hl_shout}
+                                    </button>
+                                    <button onClick={() => applyHighlight('hl-enter-exit')} className="px-3 py-2 text-left text-sm hover:bg-slate-700 text-slate-200 rounded flex items-center gap-2">
+                                        <span className="w-3 h-3 rounded-full bg-sky-400"></span> {t.sp_hl_enter}
+                                    </button>
+                                    <button onClick={() => applyHighlight('hl-other')} className="px-3 py-2 text-left text-sm hover:bg-slate-700 text-slate-200 rounded flex items-center gap-2">
+                                        <span className="w-3 h-3 rounded-full bg-emerald-400"></span> {t.sp_hl_other}
+                                    </button>
+                                    <div className="w-full h-px bg-slate-600/50 my-1"></div>
+                                    <button onClick={() => applyHighlight('clear')} className="px-3 py-2 text-left text-sm hover:bg-slate-700 text-slate-200 rounded flex items-center gap-2">
+                                        <X className="w-3 h-3 text-red-400" /> {t.sp_hl_remove}
+                                    </button>
+                                </>
+                            )}
                         </>
                     )}
                 </div>
@@ -1075,13 +1169,13 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({ isOpen, onClose, appMode, lef
                             onMouseDown={handlePromptDragStart}
                         >
                             <span>
-                                {editingMarkerNode ? 'Modifica Marker' : 'Nuovo Marker'}
+                                {editingMarkerNode ? t.sp_edit_marker : t.sp_new_marker}
                             </span>
                             <Move className="w-4 h-4 text-slate-500" />
                         </div>
                         
                         <div className="flex flex-col gap-2 mb-3 max-h-[200px] overflow-y-auto custom-scrollbar pr-1">
-                            <label className="block text-xs font-bold text-slate-400">Azioni (Opzionali)</label>
+                            <label className="block text-xs font-bold text-slate-400">{t.sp_actions_opt}</label>
                             {multiItems.map((item, idx) => (
                                 <div key={item.id} className="flex gap-2 items-center">
                                     <select 
@@ -1093,10 +1187,10 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({ isOpen, onClose, appMode, lef
                                         }}
                                         className="bg-slate-700 border border-slate-600 rounded p-1.5 text-xs outline-none focus:border-indigo-500 w-24"
                                     >
-                                        <option value="playlist">🎵 Scaletta</option>
-                                        <option value="sfx">🔊 SFX</option>
-                                        <option value="light">💡 Luci</option>
-                                        <option value="proj">📽 Proiezione</option>
+                                        <option value="playlist">{t.sp_lbl_playlist}</option>
+                                        <option value="sfx">{t.sp_lbl_sfx}</option>
+                                        <option value="light">{t.sp_lbl_light}</option>
+                                        <option value="proj">{t.sp_lbl_proj}</option>
                                     </select>
                                     <input 
                                         type="text" 
@@ -1107,29 +1201,60 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({ isOpen, onClose, appMode, lef
                                             setMultiItems(newItems);
                                         }}
                                         className="flex-1 bg-slate-700 border border-slate-600 rounded p-1.5 text-xs outline-none focus:border-indigo-500"
-                                        placeholder="Etichetta"
+                                        placeholder={t.sp_label}
                                     />
                                     <button 
                                         onClick={() => setMultiItems(multiItems.filter((_, i) => i !== idx))}
                                         className="text-red-400 hover:text-red-300 p-1"
-                                        title="Rimuovi"
+                                        title={t.sp_remove}
                                     >
                                         <X className="w-3 h-3" />
                                     </button>
                                 </div>
                             ))}
-                            <button 
-                                onClick={() => setMultiItems([...multiItems, { id: `sub-${Date.now()}`, type: 'playlist', title: '' }])}
-                                className="border border-dashed border-slate-600 text-slate-400 hover:text-slate-200 hover:border-slate-500 hover:bg-slate-700 rounded p-1.5 text-xs text-center mt-1 transition-colors"
-                            >
-                                + Aggiungi Azione
-                            </button>
+                            <div className="flex items-center justify-between mt-1">
+                                <div className="flex gap-1.5">
+                                    {[
+                                        { id: 'playlist', icon: '♫', label: t.sp_lbl_playlist },
+                                        { id: 'sfx', icon: '🔊', label: t.sp_lbl_sfx },
+                                        { id: 'light', icon: '💡', label: t.sp_lbl_light },
+                                        { id: 'proj', icon: '📽', label: t.sp_lbl_proj },
+                                    ].map(t => (
+                                        <button
+                                            key={t.id}
+                                            onClick={() => {
+                                                if (preselectedTypes.includes(t.id)) {
+                                                    setPreselectedTypes(preselectedTypes.filter(x => x !== t.id));
+                                                } else {
+                                                    setPreselectedTypes([...preselectedTypes, t.id]);
+                                                }
+                                            }}
+                                            className={`w-7 h-7 flex items-center justify-center rounded border transition-colors ${preselectedTypes.includes(t.id) ? 'bg-indigo-600 border-indigo-500 text-white' : 'bg-slate-700 border-slate-600 text-slate-400 hover:text-slate-200 hover:bg-slate-600'}`}
+                                            title={t.label}
+                                        >
+                                            {t.icon}
+                                        </button>
+                                    ))}
+                                </div>
+                                <button 
+                                    onClick={() => {
+                                        const newItems = preselectedTypes.length > 0 
+                                            ? preselectedTypes.map(t => ({ id: `sub-${Math.random().toString(36).substr(2, 9)}`, type: t, title: '' })) 
+                                            : [{ id: `sub-${Math.random().toString(36).substr(2, 9)}`, type: 'playlist', title: '' }];
+                                        setMultiItems([...multiItems, ...newItems]);
+                                        setPreselectedTypes([]);
+                                    }}
+                                    className="border border-dashed border-slate-600 text-slate-400 hover:text-slate-200 hover:border-slate-500 hover:bg-slate-700 rounded p-1.5 px-3 text-xs text-center transition-colors flex-1 ml-2"
+                                >
+                                    {t.sp_add}
+                                </button>
+                            </div>
                         </div>
                         
-                        <label className="block text-xs font-bold text-slate-400 mb-1">Nota Dettagliata Condivisa</label>
+                        <label className="block text-xs font-bold text-slate-400 mb-1">{t.sp_detailed_note}</label>
                         <textarea 
                             rows={3}
-                            placeholder="Descrizione estesa visibile al passaggio del mouse..."
+                            placeholder={t.sp_note_desc}
                             value={markerNote}
                             onChange={(e) => setMarkerNote(e.target.value)}
                             className="w-full bg-slate-700 border border-slate-600 rounded p-2 mb-2 text-sm resize-none"
@@ -1141,20 +1266,20 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({ isOpen, onClose, appMode, lef
                                 onChange={(e) => setMarkerPinned(e.target.checked)}
                                 className="rounded border-slate-600 bg-slate-800"
                             />
-                            Fissa nota nel copione
+                            {t.sp_pin_note}
                         </label>
 
                         <div className="flex gap-2 justify-end">
                             {editingMarkerNode && (
                                 <button onClick={deleteMarker} className="px-4 py-2 rounded bg-red-600/20 text-red-400 hover:bg-red-600 hover:text-white text-sm mr-auto font-bold">
-                                    Elimina
+                                    {t.sp_delete}
                                 </button>
                             )}
                             <button onClick={() => { setMarkerPrompt(null); setEditingMarkerNode(null); }} className="px-4 py-2 rounded text-slate-300 hover:bg-slate-700 text-sm">
-                                Annulla
+                                {t.sp_cancel}
                             </button>
                             <button onClick={insertMarker} className="px-4 py-2 rounded bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-sm">
-                                {editingMarkerNode ? 'Salva' : 'Inserisci'}
+                                {editingMarkerNode ? t.sp_save : t.sp_insert}
                             </button>
                         </div>
                     </div>
@@ -1211,15 +1336,15 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({ isOpen, onClose, appMode, lef
                     >
                         <div className="flex items-center gap-2 pointer-events-none">
                             <List className="w-3 h-3 text-emerald-400" />
-                            <span>Elenco Marker</span>
+                            <span>{t.sp_marker_list}</span>
                         </div>
                         <button onMouseDown={(e) => e.stopPropagation()} onClick={() => setShowMarkersList(false)} className="hover:text-white text-slate-400"><X className="w-3 h-3"/></button>
                     </div>
                     <div className="flex-1 overflow-y-auto custom-scrollbar p-2 gap-2 flex flex-col">
-                        {markersByPage.length === 0 && <span className="text-xs text-slate-500 p-2 italic">Nessun marker</span>}
+                        {markersByPage.length === 0 && <span className="text-xs text-slate-500 p-2 italic">{t.sp_no_markers}</span>}
                         {markersByPage.map((pageGrp, i) => (
                             <div key={i} id={`toc-page-${pageGrp.pageNum}`} className="mb-2">
-                                <div className="text-xs font-bold text-slate-400 mb-1 border-b border-slate-700 pb-1">Pagina {pageGrp.pageNum}</div>
+                                <div className="text-xs font-bold text-slate-400 mb-1 border-b border-slate-700 pb-1">{t.sp_page} {pageGrp.pageNum}</div>
                                 {pageGrp.groups.map(g => (
                                     <div key={g.id} className="flex gap-1 mb-1">
                                         {g.markers.map(m => (
@@ -1229,16 +1354,29 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({ isOpen, onClose, appMode, lef
                                                     if (isAutoScrolling) {
                                                         isDeviatedRef.current = true;
                                                         setIsDeviated(true);
+                                                        isCentering.current = true;
+                                                        setTimeout(() => {
+                                                            isCentering.current = false;
+                                                        }, 1000);
                                                     }
-                                                    m.node.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                                                    const container = contentRef.current?.parentElement;
+                                                    if (container) {
+                                                        const top = m.node.offsetTop - (container.clientHeight / 2) + (m.node.clientHeight / 2);
+                                                        container.scrollTo({ top: top, behavior: 'smooth' });
+                                                    }
                                                 }}
-                                                className={`text-xs p-1.5 bg-slate-900 rounded hover:bg-slate-700 border border-slate-700 text-slate-300 transition-colors shadow-sm flex items-center justify-center truncate ${g.markers.length > 1 ? 'flex-1' : 'w-full justify-start'}`}
+                                                className={`text-xs p-1.5 bg-slate-900 rounded hover:bg-slate-700 border border-slate-700 text-slate-300 transition-colors shadow-sm flex items-center gap-1 justify-start text-left truncate ${g.markers.length > 1 ? 'flex-1' : 'w-full'}`}
                                                 title={m.label}
                                             >
                                                 {isAutoScrolling && pageGrp.pageNum < currentPage && (
                                                     <span className="text-emerald-500 mr-1 font-bold">✓</span>
                                                 )}
-                                                <span className="truncate">{g.markers.length > 1 ? m.label.split(' ')[0] : m.label}</span>
+                                                <span className="truncate">{
+                                                    g.markers.length <= 1 ? m.label :
+                                                    g.markers.length <= 3 ? 
+                                                        (m.label.includes(' ') ? `${m.label.split(' ')[0]} ${m.label.substring(m.label.indexOf(' ') + 1).trim().substring(0, 4)}` : m.label.substring(0, 4)) :
+                                                        (m.label.match(/[♫🔊💡📽⚡📍⏱📝ℹ]/gu)?.join(' ') || m.label.split(' ')[0])
+                                                }</span>
                                             </button>
                                         ))}
                                     </div>
@@ -1261,6 +1399,7 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({ isOpen, onClose, appMode, lef
                 /* Highlighting Classes */
                 .hl-shout { background-color: #ffff00; color: #000000; font-weight: bold; padding: 0 4px; border-radius: 2px; }
                 .hl-enter-exit { background-color: #38bdf8; color: #082f49; font-style: italic; font-weight: bold; padding: 0 4px; border-radius: 4px; display: inline-block; }
+                .hl-other { background-color: #4ade80; color: #064e3b; font-weight: bold; padding: 0 4px; border-radius: 4px; display: inline-block; }
 
                 /* Markers */
                 .script-marker {
@@ -1329,9 +1468,9 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({ isOpen, onClose, appMode, lef
 
                 .script-marker .pinned-note-box {
                     position: absolute;
-                    background-color: #fef08a; /* amber-200 */
-                    color: #713f12; /* amber-900 */
-                    border: 1px solid #fbbf24; /* amber-400 */
+                    background-color: #fef9c3; /* yellow-100 */
+                    color: #422006; /* neutral-900 equivalent */
+                    border: 1px solid #fde047; /* yellow-300 */
                     padding: 8px;
                     border-radius: 4px;
                     white-space: pre-wrap;

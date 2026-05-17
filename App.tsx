@@ -2523,6 +2523,7 @@ const App: React.FC = () => {
                   initialPosition={initPos}
                   initialSize={initSize}
                   initialHtml={loadedScriptHtml}
+                  language={language}
               />
           );
       })()}
