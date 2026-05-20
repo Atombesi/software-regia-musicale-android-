@@ -71,7 +71,7 @@ const generateContentString = (songs: Song[], sfxItems: SfxItem[], scriptFilePat
 export const usePlaylistManager = () => {
     // --- STATE ---
     const [songs, setSongs] = useState<Song[]>([]);
-    const [sfxItems, setSfxItems] = useState<SfxItem[]>(new Array(6).fill(undefined));
+    const [sfxItems, setSfxItems] = useState<SfxItem[]>(new Array(9).fill(undefined));
     const [currentIndex, setCurrentIndex] = useState(0);
     const [playedSongIds, setPlayedSongIds] = useState<Set<string>>(new Set());
     

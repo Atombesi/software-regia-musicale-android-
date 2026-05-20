@@ -30,13 +30,15 @@ interface NetworkModalProps {
     showErrorDialog?: boolean;
     onDownloadRequest?: () => void;
     onCloseErrorDialog?: () => void;
+    onExecuteShowRequest?: () => void;
 }
 
 const NetworkModal: React.FC<NetworkModalProps> = ({ 
     isOpen, onClose, sync, t, songs = [], sfx = [], masterFilePath, onAssetsUpdated,
     clientPin = "", onChangeClientPin, serverPin = "", clientName = "",
     // DOWNLOAD PROPS
-    isDownloading = false, downloadProgress = 0, downloadStatusText = "", errorDetails = [], showErrorDialog = false, onDownloadRequest, onCloseErrorDialog
+    isDownloading = false, downloadProgress = 0, downloadStatusText = "", errorDetails = [], showErrorDialog = false, onDownloadRequest, onCloseErrorDialog,
+    onExecuteShowRequest
 }) => {
     const [activeTab, setActiveTab] = useState<'server' | 'client'>(isAndroidPlatform() ? 'client' : 'server');
     const [inputIP, setInputIP] = useState("");
@@ -209,18 +211,38 @@ const NetworkModal: React.FC<NetworkModalProps> = ({
                                                 </div>
 
                                                 {/* Permission Toggle Row */}
-                                                <div className="flex items-center justify-between bg-slate-900/50 rounded-lg p-2 px-3">
+                                                <div className="flex flex-col gap-2 mt-1">
                                                     <span className="text-[10px] font-bold uppercase text-slate-400">Permessi Regia</span>
-                                                    <div className="flex items-center gap-2">
-                                                        <span className={`text-[9px] font-bold ${client.locked ? 'text-indigo-400' : 'text-emerald-400'}`}>
-                                                            {client.locked ? 'SOLO CHAT' : 'COMPLETI'}
-                                                        </span>
+                                                    <div className="flex bg-slate-900 rounded-lg p-1">
                                                         <button 
-                                                            onClick={() => sync.setClientPermission(client.id, !client.locked)}
-                                                            className={`w-10 h-5 rounded-full relative transition-colors ${!client.locked ? 'bg-emerald-600' : 'bg-slate-700'}`}
-                                                            title={client.locked ? "Sblocca Comandi" : "Blocca Comandi (Solo Chat)"}
+                                                            onClick={() => sync.setClientPermission(client.id, 'full')}
+                                                            className={`flex-1 py-1.5 text-[10px] font-bold rounded-md transition-colors ${
+                                                                (client.permissionMode || (client.locked ? 'chat' : 'full')) === 'full' 
+                                                                    ? 'bg-emerald-600/20 text-emerald-400' 
+                                                                    : 'text-slate-500 hover:text-slate-300'
+                                                            }`}
                                                         >
-                                                            <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all shadow-sm ${!client.locked ? 'left-5.5' : 'left-0.5'}`} />
+                                                            COMPLETI
+                                                        </button>
+                                                        <button 
+                                                            onClick={() => sync.setClientPermission(client.id, 'chat')}
+                                                            className={`flex-1 py-1.5 text-[10px] font-bold rounded-md transition-colors ${
+                                                                (client.permissionMode || (client.locked ? 'chat' : 'full')) === 'chat' 
+                                                                    ? 'bg-indigo-600/20 text-indigo-400' 
+                                                                    : 'text-slate-500 hover:text-slate-300'
+                                                            }`}
+                                                        >
+                                                            SOLO CHAT
+                                                        </button>
+                                                        <button 
+                                                            onClick={() => sync.setClientPermission(client.id, 'pad')}
+                                                            className={`flex-1 py-1.5 text-[10px] font-bold rounded-md transition-colors ${
+                                                                (client.permissionMode || (client.locked ? 'chat' : 'full')) === 'pad' 
+                                                                    ? 'bg-orange-600/20 text-orange-400' 
+                                                                    : 'text-slate-500 hover:text-slate-300'
+                                                            }`}
+                                                        >
+                                                            SOLO PAD
                                                         </button>
                                                     </div>
                                                 </div>
@@ -240,9 +262,14 @@ const NetworkModal: React.FC<NetworkModalProps> = ({
                             )}
 
                             {sync.status === 'connected' && sync.role === 'master' ? (
-                                <button onClick={sync.stopServer} className="w-full py-2.5 bg-red-900/30 hover:bg-red-900/50 text-red-400 border border-red-900 rounded-xl font-bold transition-all text-sm mt-4">
-                                    {t.server_stop}
-                                </button>
+                                <div className="flex gap-2 mt-4">
+                                    <button onClick={sync.stopServer} className="flex-1 py-2.5 bg-red-900/30 hover:bg-red-900/50 text-red-400 border border-red-900 rounded-xl font-bold transition-all text-sm">
+                                        {t.server_stop}
+                                    </button>
+                                    <button onClick={onExecuteShowRequest} className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white border border-emerald-500 rounded-xl font-bold transition-all text-sm shadow-lg shadow-emerald-900/40">
+                                        Esegui
+                                    </button>
+                                </div>
                             ) : (
                                 <button onClick={() => sync.startServer(serverPin)} disabled={isAndroidPlatform()} className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-bold transition-all shadow-lg shadow-indigo-900/20 disabled:opacity-50 disabled:cursor-not-allowed text-sm">
                                     {t.server_start}
@@ -319,10 +346,16 @@ const NetworkModal: React.FC<NetworkModalProps> = ({
                                      </div>
 
                                      {/* READ ONLY STATUS INDICATOR */}
-                                     {sync.isReadOnly && (
+                                     {sync.clientPermissionMode === 'chat' && (
                                          <div className="bg-indigo-900/30 border border-indigo-500/30 rounded-lg p-2 flex items-center justify-center gap-2">
                                              <MessageSquare className="w-4 h-4 text-indigo-400" />
                                              <span className="text-xs font-bold text-indigo-300 uppercase">Modalità Solo Chat Attiva</span>
+                                         </div>
+                                     )}
+                                     {sync.clientPermissionMode === 'pad' && (
+                                         <div className="bg-orange-900/30 border border-orange-500/30 rounded-lg p-2 flex items-center justify-center gap-2">
+                                             <MessageSquare className="w-4 h-4 text-orange-400" />
+                                             <span className="text-xs font-bold text-orange-300 uppercase">Modalità Solo Pad Attiva</span>
                                          </div>
                                      )}
 

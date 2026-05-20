@@ -1,7 +1,7 @@
 
 import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { Song, AppMode, Language } from '../types';
-import { Music2, PlayCircle, PauseCircle, Upload, Disc, Check, Edit3, MonitorPlay, RotateCcw, Save, Scissors, Wind, SignalHigh, GripVertical, Plus, AlertTriangle, Activity, Trash2, FileSignature, Info, Link2, ChevronUp, ChevronDown, StickyNote, Minimize2, Maximize2, FilePenLine, FileText, MessageSquare, Timer, Divide, Pin } from 'lucide-react';
+import { Music2, PlayCircle, PauseCircle, Upload, Disc, Check, Edit3, MonitorPlay, RotateCcw, Save, Scissors, Wind, SignalHigh, GripVertical, Plus, AlertTriangle, Activity, Trash2, FileSignature, Info, Link2, ChevronUp, ChevronDown, StickyNote, Minimize2, Maximize2, FilePenLine, FileText, MessageSquare, Timer, Divide, Pin, Grid } from 'lucide-react';
 import { translations } from '../translations';
 
 interface PlaylistViewProps {
@@ -30,6 +30,9 @@ interface PlaylistViewProps {
   playlistFileName?: string; 
   isCompactView?: boolean; 
   onToggleCompactView?: () => void; 
+  isSfxPadMode?: boolean;
+  onToggleSfxPad?: () => void;
+  isPadForced?: boolean;
   appVersion?: string; 
   isAndroid?: boolean; 
   onOpenLog?: () => void; 
@@ -197,6 +200,9 @@ const PlaylistView: React.FC<PlaylistViewProps> = ({
   playlistFileName,
   isCompactView = false,
   onToggleCompactView,
+  isSfxPadMode = false,
+  onToggleSfxPad,
+  isPadForced = false,
   appVersion,
   isAndroid = false,
   onOpenLog,
@@ -396,7 +402,7 @@ const PlaylistView: React.FC<PlaylistViewProps> = ({
                                 {isCompactView ? <Maximize2 className="w-4 h-4" /> : <Minimize2 className="w-4 h-4" />}
                             </button>
                          )}
-                         
+
                          {/* PIN NOTE BUTTON FOR DESKTOP */}
                          {!isAndroid && onTogglePinNotes && !hasScript && (
                              <button

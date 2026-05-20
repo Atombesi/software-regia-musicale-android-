@@ -6,7 +6,7 @@ import PlaylistView from './components/PlaylistView';
 import PlayerControls from './components/PlayerControls';
 import Waveform from './components/Waveform';
 import NotesPanel from './components/NotesPanel';
-import { Scissors, Zap, Wind, MapPin, Save, RefreshCcw, Plus, Minus, PlayCircle, PauseCircle, StickyNote, Edit2, X, Pause, SignalHigh, GripVertical, Wifi, Phone, PhoneCall, PhoneIncoming, Send } from 'lucide-react';
+import { Scissors, Zap, Wind, MapPin, Save, RefreshCcw, Plus, Minus, PlayCircle, PauseCircle, StickyNote, Edit2, X, Pause, SignalHigh, GripVertical, Wifi, Phone, PhoneCall, PhoneIncoming, Send, Volume2, Play, Type } from 'lucide-react';
 import { Capacitor } from '@capacitor/core';
 import { Filesystem, Directory, Encoding, FileInfo } from '@capacitor/filesystem';
 import { translations } from './translations';
@@ -38,6 +38,7 @@ import RawEditorModal from './components/modals/RawEditorModal';
 import NoteModal from './components/modals/NoteModal';
 import TimeEditModal from './components/modals/TimeEditModal';
 import NetworkModal from './components/modals/NetworkModal';
+import { SfxPad } from './components/SfxPad';
 import ChatModal from './components/modals/ChatModal'; 
 import RenameModal from './components/modals/RenameModal';
 import ScriptPanel from './components/ScriptPanel'; 
@@ -154,9 +155,51 @@ const App: React.FC = () => {
   const [playbackSource, setPlaybackSource] = useState<'html5' | 'waveform'>('html5');
   const [appMode, setAppMode] = useState<AppMode>('editing');
   const [showWaveform, setShowWaveform] = useState(true); 
+  const [isSfxPadMode, setIsSfxPadMode] = useState(false);
   const [isCompactView, setIsCompactView] = useState(false);
   const [activeSfxIndices, setActiveSfxIndices] = useState<Set<number>>(new Set());
+  const [sfxProgressMap, setSfxProgressMap] = useState<{[index: number]: number}>({});
   const activeSfxAudioRefs = useRef<{[index: number]: HTMLAudioElement}>({});
+  const [sfxMasterVolume, setSfxMasterVolume] = useState<number>(1.0);
+  const sfxMasterVolumeRef = useRef(1.0);
+  useEffect(() => { sfxMasterVolumeRef.current = sfxMasterVolume; }, [sfxMasterVolume]);
+
+  const getSfxProgress = useCallback((idx: number) => {
+      // Direct DOM read for smooth local playback, fallback to synced state
+      if (activeSfxAudioRefs.current[idx]) {
+          return activeSfxAudioRefs.current[idx].currentTime;
+      }
+      return sfxProgressMap[idx] || 0;
+  }, [sfxProgressMap]);
+
+  const [sfxDurations, setSfxDurations] = useState<{ [index: number]: number }>({});
+  
+  useEffect(() => {
+      const loadMetadataSequentially = async () => {
+          for (let idx = 0; idx < playlistState.sfxItems.length; idx++) {
+              const sfx = playlistState.sfxItems[idx];
+              if (sfx && sfx.url) {
+                  try {
+                      await new Promise<void>((resolve) => {
+                          const audio = new Audio(sfx.url);
+                          audio.onloadedmetadata = () => {
+                              setSfxDurations(prev => ({ ...prev, [idx]: audio.duration }));
+                              resolve();
+                          };
+                          audio.onerror = () => resolve(); // on error continue
+                          // Timeout to avoid hanging
+                          setTimeout(resolve, 1000);
+                      });
+                  } catch (e) {
+                      console.error("Metadata load error", e);
+                  }
+              }
+          }
+      };
+      // Give a tiny delay to not clog UI thread immediately on load
+      setTimeout(loadMetadataSequentially, 500);
+  }, [playlistState.sfxItems]);
+
   const [lastExplorerPath, setLastExplorerPath] = useState<string>('');
 
   // --- LOGGER HOOK ---
@@ -235,7 +278,7 @@ const App: React.FC = () => {
   const [networkModalOpen, setNetworkModalOpen] = useState(false);
   
   // NEW: Rename Modal State
-  const [renameModal, setRenameModal] = useState<{isOpen: boolean, index: number, name: string}>({isOpen: false, index: -1, name: ''});
+  const [renameModal, setRenameModal] = useState<{isOpen: boolean, index: number, name: string, type?: 'song'|'sfx'}>({isOpen: false, index: -1, name: '', type: 'song'});
 
   const [logContent, setLogContent] = useState(""); 
   const [pendingSaveContent, setPendingSaveContent] = useState<string | null>(null);
@@ -539,6 +582,17 @@ const App: React.FC = () => {
       audioControls.setVolume(vol);
   }, [audioControls]);
 
+  const handleSfxMasterVolumeChange = useCallback((vol: number) => {
+      setSfxMasterVolume(vol);
+      Object.keys(activeSfxAudioRefs.current).forEach(key => {
+          const idx = parseInt(key);
+          const item = playlistState.sfxItems[idx];
+          if (item && activeSfxAudioRefs.current[idx]) {
+              activeSfxAudioRefs.current[idx].volume = (item.customGain || 1) * vol;
+          }
+      });
+  }, [playlistState.sfxItems]);
+
   const performReset = useCallback((source: 'local' | 'remote' = 'local') => {
       playlistActions.resetShow();
       setEditingSfxIndex(null);
@@ -594,7 +648,10 @@ const App: React.FC = () => {
                logEvent(`Esecuzione effetto ${index + 1}`, `${item.label}; ${getTrackDetails(item)}`, false, source === 'remote' ? "[client]" : "");
           }
           const audio = new Audio(item.url);
-          audio.volume = item.customGain || 1;
+          audio.onloadedmetadata = () => {
+              setSfxDurations(prev => ({ ...prev, [index]: audio.duration }));
+          };
+          audio.volume = (item.customGain || 1) * sfxMasterVolumeRef.current;
           if (item.trimStart) audio.currentTime = item.trimStart;
           audio.onended = () => {
               delete activeSfxAudioRefs.current[index];
@@ -620,6 +677,7 @@ const App: React.FC = () => {
       else if (cmd.type === 'FADE') performManualFade('remote');
       else if (cmd.type === 'SFX') performSfxPlay(cmd.index, 'remote');
       else if (cmd.type === 'SET_VOLUME') performVolumeChange(cmd.value);
+      else if (cmd.type === 'SET_SFX_VOLUME') handleSfxMasterVolumeChange(cmd.value);
       else if (cmd.type === 'SET_MODE') {
           const newMode = cmd.value === 'presentation' ? 'presentation' : 'editing';
           setAppMode(newMode);
@@ -635,6 +693,13 @@ const App: React.FC = () => {
           playlistActions.setCurrentIndex(cmd.index);
           setEditingSfxIndex(null);
           performPause('remote');
+      } else if (cmd.type === 'EXECUTE_SHOW') {
+          setNetworkModalOpen(false);
+          setAppMode('presentation');
+          setEditingSfxIndex(null);
+          setPlaybackSource('html5');
+          logEvent("LIVE_MODE_START", "Show Executed (from Master)", true, "[client]");
+          performStop('remote');
       } else if (cmd.type === 'RESET') performReset('remote');
       else if (cmd.type === 'UPDATE_SONG') {
           // FIX BUG: Prevent Client URLs from corrupting Server Paths
@@ -702,6 +767,18 @@ const App: React.FC = () => {
       if (state.fadeDuration !== undefined) {
           setGlobalFadeDuration(state.fadeDuration);
       }
+      if (state.sfxMasterVolume !== undefined && state.sfxMasterVolume !== sfxMasterVolume) {
+          handleSfxMasterVolumeChange(state.sfxMasterVolume);
+      }
+      if (state.activeSfxIndices !== undefined) {
+          setActiveSfxIndices(new Set(state.activeSfxIndices));
+      }
+      if (state.sfxProgress !== undefined) {
+          setSfxProgressMap(state.sfxProgress);
+      }
+      if (state.sfxDurations !== undefined) {
+          setSfxDurations(prev => ({...prev, ...state.sfxDurations}));
+      }
 
       audioControls.updateState({
           currentTime: state.currentTime,
@@ -743,7 +820,7 @@ const App: React.FC = () => {
               setShowEndTime(null);
           }
       }
-  }, [audioControls, playlistActions, playlistState.currentIndex, appMode]);
+  }, [audioControls, playlistActions, playlistState.currentIndex, appMode, sfxMasterVolume, handleSfxMasterVolumeChange]);
 
   const handleRemoteChat = useCallback((type: string, payload?: any, sender?: string) => {
       if (type === 'CHAT_CALL_REQ') {
@@ -807,6 +884,14 @@ const App: React.FC = () => {
                   ? (showEndTime || Date.now()) - showStartTimeRef.current 
                   : null;
 
+              // Extract SFX Progress
+              const sfxProg: { [index: number]: number } = {};
+              activeSfxIndices.forEach(idx => {
+                  if (activeSfxAudioRefs.current[idx]) {
+                      sfxProg[idx] = activeSfxAudioRefs.current[idx].currentTime;
+                  }
+              });
+
               remoteSync.broadcastState({
                   currentTime: playerState.currentTime,
                   isPlaying: playerState.isPlaying,
@@ -818,12 +903,16 @@ const App: React.FC = () => {
                   isShowEnded: !!showEndTime,
                   // SYNC FADE INFO (NEW)
                   fadeDuration: globalFadeDuration,
-                  isFading: playerState.isFading
+                  isFading: playerState.isFading,
+                  sfxMasterVolume: sfxMasterVolume,
+                  activeSfxIndices: Array.from(activeSfxIndices),
+                  sfxProgress: sfxProg,
+                  sfxDurations: sfxDurations
               });
           }, 200); 
           return () => clearInterval(interval);
       }
-  }, [remoteSync.role, playerState.isPlaying, playerState.currentTime, playerState.volume, playlistState.currentIndex, appMode, showEndTime, globalFadeDuration, playerState.isFading]);
+  }, [remoteSync.role, remoteSync.clientCount, playerState.isPlaying, playerState.currentTime, playerState.volume, playlistState.currentIndex, appMode, showEndTime, globalFadeDuration, playerState.isFading, sfxMasterVolume, activeSfxIndices, sfxDurations]);
 
   useEffect(() => {
       if (remoteSync.role === 'master' && remoteSync.clientCount > 0 && playlistState.songs.length > 0) {
@@ -1076,7 +1165,9 @@ const App: React.FC = () => {
   };
 
   // --- READ ONLY CHECK ---
-  const isControlsDisabled = remoteSync.isReadOnly;
+  const isControlsDisabled = remoteSync.role === 'slave' && remoteSync.clientPermissionMode !== 'full';
+  const isPadForced = remoteSync.role === 'slave' && remoteSync.clientPermissionMode === 'pad';
+  const shouldShowPad = isSfxPadMode || isPadForced;
 
   // --- RELOAD / REMAP ASSETS HANDLER ---
   // UPDATED: Now accepts optional remapped lists for Windows Client Logic
@@ -1158,20 +1249,37 @@ const App: React.FC = () => {
       }
   };
 
-  const requestSfxPlay = (index: number) => {
-      if (isControlsDisabled) return; // BLOCKED
-      if (appMode === 'editing') {
-          const item = playlistState.sfxItems[index];
+  const requestSfxVolumeChange = (vol: number) => {
+      if (remoteSync.role === 'slave' && remoteSync.clientPermissionMode === 'chat') return; // BLOCKED FOR CHAT ONLY
+      if (remoteSync.role === 'slave') {
+          handleSfxMasterVolumeChange(vol);
+          remoteSync.sendMasterCommand({ type: 'SET_SFX_VOLUME', value: vol });
+      } else {
+          handleSfxMasterVolumeChange(vol);
+      }
+  };
+
+  const requestSfxPlay = (index: number, forcePlay: boolean = false) => {
+      if (remoteSync.role === 'slave' && remoteSync.clientPermissionMode === 'chat') return; // BLOCKED FOR CHAT ONLY
+      const item = playlistState.sfxItems[index];
+
+      // If we are in editing mode and NO pad is shown, handle editing UI
+      if (appMode === 'editing' && !shouldShowPad) {
           if (!item || !item.url) {
               handleOpenPicker('sfx', index);
-          } else {
+              return;
+          } else if (!forcePlay) {
               setEditingSfxIndex(index);
               performStop('local'); 
+              return;
           }
-          return;
       }
-      if (remoteSync.role === 'slave') remoteSync.sendMasterCommand({ type: 'SFX', index });
-      else performSfxPlay(index, 'local');
+      
+      // Live Mode or Pad Forced (Slave) or Force Play
+      if (item && item.url) {
+          if (remoteSync.role === 'slave') remoteSync.sendMasterCommand({ type: 'SFX', index });
+          else performSfxPlay(index, 'local');
+      }
   };
 
   const requestSongSelect = (idx: number) => {
@@ -1222,7 +1330,7 @@ const App: React.FC = () => {
 
   const requestPlayPauseRef = useRef(requestPlayPauseAction);
   useEffect(() => { requestPlayPauseRef.current = requestPlayPauseAction; }, [requestPlayPauseAction]);
-  const requestSfxPlayRef = useRef(requestSfxPlay);
+  const requestSfxPlayRef = useRef((idx: number, forcePlay?: boolean) => {});
   useEffect(() => { requestSfxPlayRef.current = requestSfxPlay; }, [requestSfxPlay]);
 
   useEffect(() => {
@@ -1232,8 +1340,7 @@ const App: React.FC = () => {
           if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
           const num = parseInt(e.key);
           if (!isNaN(num)) {
-              if (num >= 1 && num <= 3) requestSfxPlayRef.current(num - 1);
-              else if (num >= 7 && num <= 9) requestSfxPlayRef.current(num - 4);
+              if (num >= 1 && num <= 9) requestSfxPlayRef.current(num - 1, true);
           }
           if (e.code === 'Space') {
               e.preventDefault();
@@ -1333,7 +1440,7 @@ const App: React.FC = () => {
       const newSong: Song = { id: `manual-${Date.now()}`, title: removeExtension(file.name), url: URL.createObjectURL(file), artist: 'Manual Load', originalFileName: file.name, type: 'audio' };
       audioControls.hardReset();
       setEditingSfxIndex(null);
-      playlistActions.loadPlaylist([newSong], new Array(6).fill(undefined), undefined, undefined, undefined, false); // Manual load = Dirty
+      playlistActions.loadPlaylist([newSong], new Array(9).fill(undefined), undefined, undefined, undefined, false); // Manual load = Dirty
       playlistActions.setSourceFilePath(null);
   };
 
@@ -1361,12 +1468,10 @@ const App: React.FC = () => {
       }
       if (!isAndroid && (target === 'track' || target === 'sfx' || target === 'relink')) {
           setPickerState({ isOpen: false, target, index }); 
-          setTimeout(() => {
-              if (windowsFileInputRef.current) {
-                  windowsFileInputRef.current.value = ''; 
-                  windowsFileInputRef.current.click();
-              }
-          }, 50);
+          if (windowsFileInputRef.current) {
+              windowsFileInputRef.current.value = ''; 
+              windowsFileInputRef.current.click();
+          }
       } else {
           setPickerState({ isOpen: true, target, index });
       }
@@ -1553,43 +1658,32 @@ const App: React.FC = () => {
     const targetMode = appMode === 'editing' ? 'presentation' : 'editing';
     const isSwitchToLive = targetMode === 'presentation';
 
-    setConfirmModal({
-        isOpen: true,
-        title: isSwitchToLive ? t.switch_live_title : t.switch_edit_title,
-        message: isSwitchToLive ? t.switch_live_msg : t.switch_edit_msg,
-        confirmText: t.btn_confirm,
-        cancelText: t.btn_cancel,
-        action: () => {
-             // 1. REMOTE CLIENT LOGIC
-             if (remoteSync.role === 'slave') {
-                 remoteSync.sendMasterCommand({ type: 'SET_MODE', value: targetMode });
-                 // Optimistic update
-                 setAppMode(targetMode);
-                 if (isSwitchToLive) {
-                     setEditingSfxIndex(null);
-                     setPlaybackSource('html5');
-                 }
-                 setConfirmModal(prev => ({...prev, isOpen: false}));
-                 return;
-             }
-
-             // 2. LOCAL / MASTER LOGIC
-             setAppMode(targetMode);
-             if (isSwitchToLive) {
-                 setEditingSfxIndex(null);
-                 setPlaybackSource('html5');
-                 audioControls.stop(); // Use controls wrapper for clean stop
-                 logEvent("LIVE_MODE_START", "Passaggio a modalità Live", true);
-             } else {
-                 audioControls.stop();
-                 logEvent("EDIT_MODE_START", "Passaggio a modalità Editing", true);
-                 checkLogFileExistence(); // Restore Log Button visibility check
-             }
-             // Resize trigger for Waveform
-             setTimeout(() => { window.dispatchEvent(new Event('resize')); }, 300);
-             setConfirmModal(prev => ({ ...prev, isOpen: false }));
+    // 1. REMOTE CLIENT LOGIC
+    if (remoteSync.role === 'slave') {
+        remoteSync.sendMasterCommand({ type: 'SET_MODE', value: targetMode });
+        // Optimistic update
+        setAppMode(targetMode);
+        if (isSwitchToLive) {
+            setEditingSfxIndex(null);
+            setPlaybackSource('html5');
         }
-    });
+        return;
+    }
+
+    // 2. LOCAL / MASTER LOGIC
+    setAppMode(targetMode);
+    if (isSwitchToLive) {
+        setEditingSfxIndex(null);
+        setPlaybackSource('html5');
+        audioControls.stop(); // Use controls wrapper for clean stop
+        logEvent("LIVE_MODE_START", "Passaggio a modalità Live", true);
+    } else {
+        audioControls.stop();
+        logEvent("EDIT_MODE_START", "Passaggio a modalità Editing", true);
+        checkLogFileExistence(); // Restore Log Button visibility check
+    }
+    // Resize trigger for Waveform
+    setTimeout(() => { window.dispatchEvent(new Event('resize')); }, 300);
   };
 
   const handleOpenRawEditor = () => {
@@ -1706,7 +1800,7 @@ const App: React.FC = () => {
   const parsePlaylistContent = (content: string): { songs: Song[], sfx: SfxItem[], scriptPath: string | null } => {
     const lines = content.split('\n');
     const songs: Song[] = [];
-    const sfx: SfxItem[] = new Array(6).fill(undefined);
+    const sfx: SfxItem[] = new Array(9).fill(undefined);
     let scriptPath: string | null = null;
     let isParsingNotes = false;
     let currentNotePointer: string | null = null;
@@ -1741,7 +1835,7 @@ const App: React.FC = () => {
         
         if (parts[0] === 'SFX') {
             const idx = parseInt(parts[1]);
-            if (!isNaN(idx) && idx >= 0 && idx < 6) {
+            if (!isNaN(idx) && idx >= 0 && idx < 9) {
                 // FADE PARSING LOGIC
                 let hasFade = false;
                 let fadeDur = 5;
@@ -1861,7 +1955,7 @@ const App: React.FC = () => {
 
      // 3. Load Merged Data
      // IMPORTANT: Pass `false` for fromDisk to indicate this is an edit, not a fresh load.
-     handlePlaylistLoaded(mergedSongs, mergedSfx, playlistState.sourceFileName, playlistState.sourceFilePath || undefined, playlistState.sourceDirectory, false);
+     handlePlaylistLoaded(mergedSongs, mergedSfx, playlistState.sourceFileName, playlistState.sourceFilePath || undefined, playlistState.sourceDirectory, playlistState.scriptFilePath, false);
      setRawEditorOpen(false);
   };
 
@@ -1922,6 +2016,13 @@ const App: React.FC = () => {
                 showErrorDialog={showErrorDialog}
                 onDownloadRequest={handleDownloadMedia}
                 onCloseErrorDialog={() => setShowErrorDialog(false)}
+                onExecuteShowRequest={() => {
+                    remoteSync.broadcastCommand({ type: 'EXECUTE_SHOW' });
+                    setAppMode('presentation');
+                    setNetworkModalOpen(false);
+                    setEditingSfxIndex(null);
+                    setPlaybackSource('html5');
+                }}
             />
             <SettingsModal 
                 isOpen={settingsModalOpen} 
@@ -2002,6 +2103,9 @@ const App: React.FC = () => {
                     playlistFileName={playlistState.sourceFileName} 
                     isCompactView={isCompactView}
                     onToggleCompactView={() => setIsCompactView(!isCompactView)}
+                    onToggleSfxPad={() => setIsSfxPadMode(!isSfxPadMode)}
+                    isSfxPadMode={isSfxPadMode}
+                    isPadForced={isPadForced}
                     appVersion={APP_VERSION}
                     isAndroid={isAndroid}
                     onOpenLog={(!isAndroid && logFileExists && appMode === 'editing') ? handleOpenLogViewer : undefined}
@@ -2252,10 +2356,12 @@ const App: React.FC = () => {
                                 const hasCuts = sfx && ((sfx.trimStart && sfx.trimStart > 0) || (sfx.trimEnd && sfx.trimEnd > 0));
                                 const hasFade = sfx && sfx.hasFadeOut;
                                 return (
-                                    <button
+                                    <div
                                         key={idx}
-                                        onClick={() => requestSfxPlay(idx)}
-                                        className={`relative group rounded-xl border-2 flex flex-col items-center justify-center p-2 transition-all active:scale-95 shadow-lg
+                                        role="button"
+                                        tabIndex={0}
+                                        onClick={() => requestSfxPlay(idx, true)}
+                                        className={`relative group rounded-xl border-2 flex flex-col items-center justify-center p-2 transition-all cursor-pointer active:scale-95 shadow-lg
                                             ${scriptPanelOpen && appMode === 'presentation' ? 'w-full h-20 shrink-0' : (isCompactView && appMode === 'presentation' ? 'w-24 h-12' : 'h-20')} 
                                             ${hasFile
                                                 ? (isPlaying 
@@ -2268,7 +2374,7 @@ const App: React.FC = () => {
                                     >
                                         {!isAndroid && (
                                             <div className="absolute top-1 left-2 text-sm font-black text-slate-500 group-hover:text-white transition-colors pointer-events-none z-10">
-                                                {idx < 3 ? idx + 1 : idx + 4}
+                                                {idx + 1}
                                             </div>
                                         )}
                                         {hasFile ? (
@@ -2277,33 +2383,79 @@ const App: React.FC = () => {
                                                     <div className={`rounded-full flex items-center justify-center transition-colors 
                                                         ${isCompactView && appMode === 'presentation' ? 'w-4 h-4' : 'w-6 h-6'}
                                                         ${isPlaying ? 'bg-lime-500 text-slate-900' : (isEditingThis ? 'bg-indigo-500 text-white' : 'bg-amber-500/10 group-hover:bg-amber-500/20')}`}>
-                                                        {isPlaying ? <Pause className="w-3 h-3 fill-current" /> : (isEditingThis ? <Edit2 className="w-3 h-3" /> : <Zap className="w-3 h-3 text-amber-500" />)}
+                                                        {isPlaying ? <Volume2 className="w-3 h-3 fill-current" /> : (isEditingThis ? <Play className="w-3 h-3 fill-white" /> : <Zap className="w-3 h-3 text-amber-500" />)}
                                                     </div>
                                                     {!isCompactView && (
-                                                        <div className="flex items-center gap-0.5 opacity-80">
+                                                        <div className="flex items-center gap-0.5 opacity-80 pointer-events-none">
                                                             {hasGain && <SignalHigh className={`w-3 h-3 ${isEditingThis ? 'text-indigo-300' : 'text-slate-400'}`} />}
                                                             {hasCuts && <Scissors className={`w-3 h-3 ${isEditingThis ? 'text-indigo-300' : 'text-slate-400'}`} />}
                                                             {hasFade && <Wind className={`w-3 h-3 ${isEditingThis ? 'text-indigo-300' : 'text-slate-400'}`} />}
                                                         </div>
                                                     )}
                                                 </div>
-                                                <span className={`font-bold truncate w-full text-center ${isCompactView && appMode === 'presentation' ? 'text-[10px] leading-none' : 'text-xs'} ${isPlaying ? 'text-lime-400' : (isEditingThis ? 'text-indigo-300' : 'text-white')}`}>{sfx.label || `SFX ${idx+1}`}</span>
+                                                {sfxDurations[idx] && (
+                                                    <div className="absolute bottom-1 right-1 md:bottom-1 md:right-2 text-[9px] md:text-[10px] font-mono text-slate-500 z-10 pointer-events-none">
+                                                        {formatTimeDetail(sfxDurations[idx])}
+                                                    </div>
+                                                )}
+                                                <span className={`font-bold truncate w-full text-center pointer-events-none ${isCompactView && appMode === 'presentation' ? 'text-[10px] leading-none' : 'text-xs'} ${isPlaying ? 'text-lime-400' : (isEditingThis ? 'text-indigo-300' : 'text-white')}`}>{sfx.label || `SFX ${idx+1}`}</span>
                                                 {appMode === 'editing' && (
-                                                    <div 
-                                                        onClick={(e) => { e.stopPropagation(); handleDeleteSfx(idx); }}
-                                                        className="absolute top-1 right-1 p-1 bg-red-900/80 rounded-full text-red-200 hover:bg-red-600 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity"
-                                                    >
-                                                        <X className="w-3 h-3" />
+                                                    <div className="absolute top-1 right-1 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                        <div 
+                                                            onClick={(e) => { e.stopPropagation(); setRenameModal({isOpen: true, index: idx, name: sfx.label || `SFX ${idx+1}`, type: 'sfx'}); }}
+                                                            className="p-1 bg-amber-900/80 rounded-full text-amber-200 hover:bg-amber-600 hover:text-white"
+                                                            title="Rinomina"
+                                                        >
+                                                            <Type className="w-3 h-3" />
+                                                        </div>
+                                                        <div 
+                                                            onClick={(e) => { e.stopPropagation(); setEditingSfxIndex(idx); performStop('local'); }}
+                                                            className="p-1 bg-indigo-900/80 rounded-full text-indigo-200 hover:bg-indigo-600 hover:text-white"
+                                                            title="Proprietà"
+                                                        >
+                                                            <Edit2 className="w-3 h-3" />
+                                                        </div>
+                                                        <div 
+                                                            onClick={(e) => { e.stopPropagation(); handleDeleteSfx(idx); }}
+                                                            className="p-1 bg-red-900/80 rounded-full text-red-200 hover:bg-red-600 hover:text-white"
+                                                            title="Rimuovi"
+                                                        >
+                                                            <X className="w-3 h-3" />
+                                                        </div>
                                                     </div>
                                                 )}
                                             </>
                                         ) : (
-                                            <div className="flex flex-col items-center gap-1 opacity-50 group-hover:opacity-100 text-slate-500">
-                                                <Plus className="w-5 h-5" />
-                                                <span className="text-[10px] font-bold">ADD SFX</span>
-                                            </div>
+                                            <>
+                                                <div className="flex flex-col items-center justify-center gap-1 opacity-50 group-hover:opacity-100 text-slate-500 overflow-hidden w-full h-full p-1">
+                                                    <Plus className="w-5 h-5 shrink-0" />
+                                                    <span className="text-[10px] font-bold text-center truncate w-full">
+                                                        {sfx && sfx.label ? sfx.label : 'ADD SFX'}
+                                                    </span>
+                                                </div>
+                                                {appMode === 'editing' && (
+                                                    <div className="absolute top-1 right-1 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                        <div 
+                                                            onClick={(e) => { e.stopPropagation(); setRenameModal({isOpen: true, index: idx, name: (sfx && sfx.label) ? sfx.label : `SFX ${idx+1}`, type: 'sfx'}); }}
+                                                            className="p-1 bg-amber-900/80 rounded-full text-amber-200 hover:bg-amber-600 hover:text-white"
+                                                            title="Testo / Rinomina"
+                                                        >
+                                                            <Type className="w-3 h-3" />
+                                                        </div>
+                                                        {sfx && sfx.label && (
+                                                            <div 
+                                                                onClick={(e) => { e.stopPropagation(); playlistActions.updateSfx(idx, undefined); }}
+                                                                className="p-1 bg-red-900/80 rounded-full text-red-200 hover:bg-red-600 hover:text-white"
+                                                                title="Rimuovi Testo"
+                                                            >
+                                                                <X className="w-3 h-3" />
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                )}
+                                            </>
                                         )}
-                                    </button>
+                                    </div>
                                 );
                             })}
                         </div>
@@ -2443,6 +2595,15 @@ const App: React.FC = () => {
           showErrorDialog={showErrorDialog}
           onDownloadRequest={handleDownloadMedia}
           onCloseErrorDialog={() => setShowErrorDialog(false)}
+          onExecuteShowRequest={() => {
+              remoteSync.broadcastCommand({ type: 'EXECUTE_SHOW' });
+              setAppMode('presentation');
+              setNetworkModalOpen(false);
+              setEditingSfxIndex(null);
+              setPlaybackSource('html5');
+              logEvent("LIVE_MODE_START", "Show Executed (from Master)", true, "[master]");
+              performStop('local');
+          }}
       /> 
       <RenameModal 
           isOpen={renameModal.isOpen}
@@ -2450,10 +2611,12 @@ const App: React.FC = () => {
           onClose={() => setRenameModal(prev => ({...prev, isOpen: false}))}
           onSave={(val) => {
               if (renameModal.index !== -1) {
-                  // Se sono in modalità Slave, dovrei mandare il comando al master, 
-                  // ma l'UI generalmente blocca questa interazione.
-                  // Se invece sono Master, aggiorno localmente:
-                  playlistActions.updateSong(renameModal.index, s => ({...s, title: val}));
+                  if (renameModal.type === 'sfx') {
+                      const oldItem = playlistState.sfxItems[renameModal.index];
+                      playlistActions.updateSfx(renameModal.index, oldItem ? { ...oldItem, label: val } : { id: `sfx-${Date.now()}`, label: val, url: '' });
+                  } else {
+                      playlistActions.updateSong(renameModal.index, s => ({...s, title: val}));
+                  }
               }
           }}
           t={t}
@@ -2519,6 +2682,9 @@ const App: React.FC = () => {
               <ScriptPanel 
                   isOpen={scriptPanelOpen} 
                   onClose={() => setScriptPanelOpen(false)}
+                  appMode={appMode}
+                  leftPanelWidth={leftPanelWidth}
+                  isCompactView={isCompactView}
                   onSaveScript={handleSaveScript}
                   initialPosition={initPos}
                   initialSize={initSize}
@@ -2527,6 +2693,23 @@ const App: React.FC = () => {
               />
           );
       })()}
+
+      {shouldShowPad && isAndroid && (
+          <SfxPad 
+              sfxItems={playlistState.sfxItems}
+              activeSfxIndices={activeSfxIndices}
+              requestSfxPlay={(idx) => requestSfxPlayRef.current(idx)}
+              sfxMasterVolume={sfxMasterVolume}
+              onSfxMasterVolumeChange={requestSfxVolumeChange}
+              language={language}
+              isControlsDisabled={remoteSync.clientPermissionMode === 'chat'} // Readonly only blocks pad if in 'chat' mode
+              onClose={() => setIsSfxPadMode(false)}
+              isAndroid={isAndroid}
+              isPadForced={isPadForced}
+              getSfxProgress={getSfxProgress}
+              sfxDurations={sfxDurations}
+          />
+      )}
     </div>
   );
 };

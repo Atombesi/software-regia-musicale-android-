@@ -433,7 +433,7 @@ const FileLoader: React.FC<FileLoaderProps> = ({
   const parsePlaylistContent = (content: string): { songs: Song[], sfx: SfxItem[], scriptPath: string | null } => {
       const lines = content.split('\n');
       const songs: Song[] = [];
-      const sfx: SfxItem[] = new Array(6).fill(undefined);
+      const sfx: SfxItem[] = new Array(9).fill(undefined);
       let scriptPath: string | null = null;
       let isParsingNotes = false;
       let currentNotePointer: string | null = null;
@@ -468,7 +468,7 @@ const FileLoader: React.FC<FileLoaderProps> = ({
           
           if (parts[0] === 'SFX') {
               const idx = parseInt(parts[1]);
-              if (!isNaN(idx) && idx >= 0 && idx < 6) {
+              if (!isNaN(idx) && idx >= 0 && idx < 9) {
                   // FADE PARSING LOGIC
                   let hasFade = false;
                   let fadeDur = 5;

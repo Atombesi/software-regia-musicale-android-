@@ -364,7 +364,7 @@ app.whenReady().then(() => {
           for (const [ws, info] of connectedClients.entries()) {
               if (info.id === data.targetId) {
                   // Update RAM
-                  const newInfo = { ...info, locked: data.locked };
+                  const newInfo = { ...info, locked: data.locked, permissionMode: data.permissionMode || 'full' };
                   connectedClients.set(ws, newInfo);
                   break;
               }

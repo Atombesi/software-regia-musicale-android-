@@ -28,10 +28,21 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({ isOpen, onClose, appMode, lef
     const isDragging = useRef(false);
     const dragStart = useRef({ x: 0, y: 0 });
 
+    const initPosRef = useRef(initialPosition);
     useEffect(() => {
-        if (initialPosition) setPosition(initialPosition);
-        if (initialSize) setSize(initialSize);
-    }, [initialPosition, initialSize]);
+        if (initialPosition && (!initPosRef.current || initPosRef.current.x !== initialPosition.x || initPosRef.current.y !== initialPosition.y)) {
+            setPosition(initialPosition);
+            initPosRef.current = initialPosition;
+        }
+    }, [initialPosition]);
+
+    const initSizeRef = useRef(initialSize);
+    useEffect(() => {
+        if (initialSize && (!initSizeRef.current || initSizeRef.current.width !== initialSize.width || initSizeRef.current.height !== initialSize.height)) {
+            setSize(initialSize);
+            initSizeRef.current = initialSize;
+        }
+    }, [initialSize]);
     
     // File reading logic
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -441,21 +452,46 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({ isOpen, onClose, appMode, lef
         };
     }, [size.height, size.width, appMode, leftPanelWidth, isCompactView]); 
 
-    // Auto-position on enter presentation mode
+    const prevAppModeRef = useRef(appMode);
+    const modeStateRefs = useRef<{
+        editing?: { pos: { x: number; y: number }; size: { width: number; height: number } };
+        presentation?: { pos: { x: number; y: number }; size: { width: number; height: number } };
+    }>({});
+
+    // To ensure fresh position/size on mode switch without loops, we can track latest with refs:
+    const latestPosRef = useRef(position);
+    const latestSizeRef = useRef(size);
+    useEffect(() => { latestPosRef.current = position; latestSizeRef.current = size; }, [position, size]);
+    
     useEffect(() => {
-        if (isOpen && appMode === 'presentation') {
-            setIsMaximized(false);
-            const leftW = typeof leftPanelWidth === 'number' ? leftPanelWidth : 40;
-            const leftPaneW = window.innerWidth * (leftW / 100);
-            const sfxColumnWidth = 240; // approx width of SFX column + padding
-            const newX = leftPaneW + sfxColumnWidth;
-            const newY = 16;
-            const newWidth = window.innerWidth - newX - 16;
-            const newHeight = window.innerHeight - 96 - 32; // bottom bar (96px) + some margins
-            setPosition({ x: newX, y: newY });
-            setSize({ width: Math.max(400, newWidth), height: Math.max(300, newHeight) });
+        if (isOpen && appMode && prevAppModeRef.current && appMode !== prevAppModeRef.current) {
+            // Save state of the mode we are leaving
+            if (prevAppModeRef.current === 'editing')      modeStateRefs.current.editing = { pos: latestPosRef.current, size: latestSizeRef.current };
+            if (prevAppModeRef.current === 'presentation') modeStateRefs.current.presentation = { pos: latestPosRef.current, size: latestSizeRef.current };
+            
+            // Restore state of the mode we are entering
+            if (appMode === 'presentation') {
+                if (modeStateRefs.current.presentation) {
+                    setPosition(modeStateRefs.current.presentation.pos); 
+                    setSize(modeStateRefs.current.presentation.size);
+                } else {
+                    const leftW = typeof leftPanelWidth === 'number' ? leftPanelWidth : 40;
+                    const leftPaneW = window.innerWidth * (leftW / 100);
+                    const sfxColumnWidth = 240; 
+                    const newX = leftPaneW + sfxColumnWidth;
+                    const newY = 16;
+                    const newWidth = window.innerWidth - newX - 16;
+                    const newHeight = window.innerHeight - 96 - 32; 
+                    setPosition({ x: newX, y: newY });
+                    setSize({ width: Math.max(400, newWidth), height: Math.max(300, newHeight) });
+                }
+            } else if (appMode === 'editing' && modeStateRefs.current.editing) {
+                setPosition(modeStateRefs.current.editing.pos); 
+                setSize(modeStateRefs.current.editing.size);
+            }
         }
-    }, [appMode, isOpen]); // only reacts to mode and visibility
+        if (appMode) prevAppModeRef.current = appMode;
+    }, [appMode, isOpen, leftPanelWidth]);
 
     const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];

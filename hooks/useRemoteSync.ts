@@ -9,7 +9,8 @@ export interface ConnectedClient {
     id: string;
     name: string;
     ip: string;
-    locked?: boolean; // Local state tracking for Master UI
+    locked?: boolean; // Legacy
+    permissionMode?: 'full' | 'chat' | 'pad'; // NEW Local state tracking for Master UI
 }
 
 export interface RemoteSyncHook {
@@ -24,6 +25,7 @@ export interface RemoteSyncHook {
     // SLAVE STATE
     myClientId: string | null;
     isReadOnly: boolean;
+    clientPermissionMode: 'full' | 'chat' | 'pad';
 
     startServer: (pin?: string) => Promise<void>;
     stopServer: () => Promise<void>;
@@ -31,9 +33,10 @@ export interface RemoteSyncHook {
     disconnectFromMaster: () => void;
     
     kickClient: (clientId: string) => Promise<void>; // NEW
-    setClientPermission: (clientId: string, locked: boolean) => void; // NEW
+    setClientPermission: (clientId: string, mode: 'full' | 'chat' | 'pad') => void; // UPDATED
 
     sendMasterCommand: (cmd: any) => void;
+    broadcastCommand: (cmd: any) => void; // NEW
     broadcastState: (state: any) => void;
     sendPlaylist: (songs: Song[], sfx: SfxItem[], masterPath?: string) => void; 
     sendChatCommand: (type: 'CALL_REQ' | 'CALL_ACC' | 'CALL_END' | 'CHAT_MSG', payload?: any) => void;
@@ -59,6 +62,7 @@ export const useRemoteSync = (
     // FIX: Default to FALSE (Full Permissions) so Standalone mode works.
     // It only becomes TRUE when connecting as a Slave.
     const [isReadOnly, setIsReadOnly] = useState(false);
+    const [clientPermissionMode, setClientPermissionMode] = useState<'full'|'chat'|'pad'>('full');
 
     const wsRef = useRef<WebSocket | null>(null);
     const connectionTimeoutRef = useRef<any>(null);
@@ -142,24 +146,35 @@ export const useRemoteSync = (
         }
     }, [role]);
 
-    const setClientPermission = useCallback((clientId: string, locked: boolean) => {
+    const setClientPermission = useCallback((clientId: string, mode: 'full' | 'chat' | 'pad') => {
         if (role === 'master' && window.electronAPI?.server) {
             // 1. Broadcast command to all (client checks ID)
             // Server also intercepts this to update its RAM state
             window.electronAPI.server.send({ 
                 type: 'SET_PERMISSION', 
                 targetId: clientId, 
-                locked: locked 
+                locked: mode !== 'full', // Legacy support
+                permissionMode: mode
             });
 
             // 2. Update local state immediately for UI responsiveness
-            setClients(prev => prev.map(c => c.id === clientId ? { ...c, locked } : c));
+            setClients(prev => prev.map(c => c.id === clientId ? { ...c, locked: mode !== 'full', permissionMode: mode } : c));
+        }
+    }, [role]);
+
+    const broadcastCommand = useCallback((cmd: any) => {
+        if (role === 'master' && window.electronAPI?.server) {
+            window.electronAPI.server.send(cmd);
         }
     }, [role]);
 
     const broadcastState = useCallback((state: any) => {
         if (role === 'master' && window.electronAPI?.server) {
-            window.electronAPI.server.send({ type: 'SYNC_STATE', payload: state });
+            try {
+                window.electronAPI.server.send({ type: 'SYNC_STATE', payload: state });
+            } catch (e) {
+                console.error("Failed to broadcast state:", e);
+            }
         }
     }, [role]);
 
@@ -247,7 +262,8 @@ export const useRemoteSync = (
                         // Server defaults to True (Locked) for new clients, but sends it explicitly.
                         if (data.locked !== undefined) {
                             setIsReadOnly(data.locked);
-                            console.log(`[Slave] Initial Permission: ReadOnly = ${data.locked}`);
+                            setClientPermissionMode(data.permissionMode || (data.locked ? 'chat' : 'full'));
+                            console.log(`[Slave] Initial Permission: ReadOnly = ${data.locked}, Mode = ${data.permissionMode}`);
                         }
                         
                         // Start Heartbeat only after auth
@@ -276,7 +292,8 @@ export const useRemoteSync = (
                         if (data.targetId === myClientId || !myClientId) { // fallback if myClientId not set yet
                              // Update local state based on command
                              setIsReadOnly(data.locked);
-                             console.log(`[Slave] Permission Updated: ReadOnly = ${data.locked}`);
+                             setClientPermissionMode(data.permissionMode || (data.locked ? 'chat' : 'full'));
+                             console.log(`[Slave] Permission Updated: ReadOnly = ${data.locked}, Mode = ${data.permissionMode}`);
                         }
                     }
 
@@ -292,6 +309,10 @@ export const useRemoteSync = (
                     } else if (data.type && data.type.startsWith('CHAT_')) {
                         if (onChatReceivedRef.current) {
                             onChatReceivedRef.current(data.type, data.payload, data.senderName);
+                        }
+                    } else if (data.type && data.type !== 'HANDSHAKE_OK' && data.type !== 'HANDSHAKE_FAIL' && data.type !== 'SET_PERMISSION') {
+                        if (onCommandReceivedRef.current) {
+                             onCommandReceivedRef.current(data);
                         }
                     }
                 } catch (e) {}
@@ -368,6 +389,7 @@ export const useRemoteSync = (
         
         myClientId,
         isReadOnly,
+        clientPermissionMode,
 
         startServer,
         stopServer,
@@ -378,6 +400,7 @@ export const useRemoteSync = (
         setClientPermission,
 
         sendMasterCommand,
+        broadcastCommand,
         broadcastState,
         sendPlaylist,
         sendChatCommand
